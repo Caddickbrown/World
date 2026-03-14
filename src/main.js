@@ -48,6 +48,18 @@ async function init() {
     return;
   }
 
+  // Load item definitions
+  let itemDefs = new Map();
+  try {
+    const itemRes = await fetch('./data/items.json');
+    if (itemRes.ok) {
+      const itemsData = await itemRes.json();
+      for (const item of itemsData) itemDefs.set(item.id, item);
+    }
+  } catch (e) {
+    console.warn('Could not load items.json, inventory system disabled:', e);
+  }
+
   const canvas = document.getElementById('world-canvas');
   if (!canvas) {
     showError('Canvas element not found');
@@ -208,6 +220,30 @@ async function init() {
     showError(e.reason?.message || 'Promise rejected', e.reason);
   };
 
+  // ── Discoveries modal ─────────────────────────────────────────────────
+  const discoveriesModal = document.getElementById('discoveries-modal');
+  document.getElementById('discoveries-modal-close').addEventListener('click', () => {
+    discoveriesModal.classList.add('hidden');
+  });
+  discoveriesModal.addEventListener('click', e => {
+    if (e.target === discoveriesModal) discoveriesModal.classList.add('hidden');
+  });
+  document.addEventListener('click', e => {
+    if (e.target?.id === 'discoveries-view-all' || e.target?.closest('#discoveries-view-all')) {
+      const discovered = window._lastDiscovered ?? [];
+      const alive = window._lastAlive ?? 0;
+      const modalList = document.getElementById('discoveries-modal-list');
+      modalList.innerHTML = discovered.map(c =>
+        `<div class="concept-item">
+          <span class="concept-dot"></span>
+          <span>${c.icon ?? ''} ${c.name}</span>
+          <span class="concept-spread">${c.knownCount}/${alive}</span>
+        </div>`
+      ).join('');
+      discoveriesModal.classList.remove('hidden');
+    }
+  });
+
   // ── Click detection ────────────────────────────────────────────────────
   // We raycast to the ground plane (y=0) to get a world position, then
   // find the nearest live agent within a generous pick radius. This is far
@@ -216,33 +252,80 @@ async function init() {
   const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   const groundPoint = new THREE.Vector3();
   const PICK_RADIUS = TILE_SIZE * 1.5; // 3 world-units ≈ 1.5 tiles
-  let mouseDownAt   = null;
+  let mouseDownAt  = null;
+  let dragAgent    = null;  // agent being dragged
+  let isDragging   = false; // true once mouse moves >5px with dragAgent
+
+  const findNearestAgent = (wx, wz) => {
+    let hit = null, bestDist = PICK_RADIUS;
+    for (const agent of agents) {
+      if (agent.health <= 0) continue;
+      const dist = Math.hypot(wx - agent.x * TILE_SIZE, wz - agent.z * TILE_SIZE);
+      if (dist < bestDist) { bestDist = dist; hit = agent; }
+    }
+    return hit;
+  };
 
   canvas.addEventListener('mousedown', e => {
     mouseDownAt = { x: e.clientX, y: e.clientY };
+    // Check if clicking near an agent (may become a drag)
+    const ndc = wr.getNDC(e);
+    raycaster.setFromCamera(ndc, wr.camera);
+    if (raycaster.ray.intersectPlane(groundPlane, groundPoint)) {
+      dragAgent  = findNearestAgent(groundPoint.x, groundPoint.z);
+      isDragging = false;
+    }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!mouseDownAt || !dragAgent) return;
+    const dx = e.clientX - mouseDownAt.x;
+    const dy = e.clientY - mouseDownAt.y;
+    if (!isDragging && Math.hypot(dx, dy) > 5) isDragging = true;
+    if (isDragging) {
+      const ndc = wr.getNDC(e);
+      raycaster.setFromCamera(ndc, wr.camera);
+      if (raycaster.ray.intersectPlane(groundPlane, groundPoint)) {
+        dragAgent.x       = groundPoint.x / TILE_SIZE;
+        dragAgent.z       = groundPoint.z / TILE_SIZE;
+        dragAgent.targetX = dragAgent.x;
+        dragAgent.targetZ = dragAgent.z;
+      }
+    }
   });
 
   canvas.addEventListener('mouseup', e => {
     if (!mouseDownAt) return;
+
+    // Finish drag: snap agent to nearest valid tile
+    if (isDragging && dragAgent) {
+      const tileX = Math.round(dragAgent.x);
+      const tileZ = Math.round(dragAgent.z);
+      const tile  = world.getTile(tileX, tileZ);
+      if (tile && tile.type !== TileType.WATER && tile.type !== TileType.DEEP_WATER) {
+        dragAgent.x = tileX; dragAgent.z = tileZ;
+        dragAgent.targetX = tileX; dragAgent.targetZ = tileZ;
+      } else {
+        // Revert to last valid position (targetX/Z before drag started)
+        dragAgent.x = dragAgent.targetX; dragAgent.z = dragAgent.targetZ;
+      }
+      mouseDownAt = null; dragAgent = null; isDragging = false;
+      return;
+    }
+    dragAgent  = null;
+    isDragging = false;
+
     const dx = e.clientX - mouseDownAt.x;
     const dy = e.clientY - mouseDownAt.y;
     mouseDownAt = null;
-    if (Math.hypot(dx, dy) > 5) return; // was a drag
+    if (Math.hypot(dx, dy) > 5) return; // was a camera drag
 
     const ndc = wr.getNDC(e);
     raycaster.setFromCamera(ndc, wr.camera);
     if (!raycaster.ray.intersectPlane(groundPlane, groundPoint)) return;
 
     // Find nearest live agent to the click position
-    let hit = null;
-    let bestDist = PICK_RADIUS;
-    for (const agent of agents) {
-      if (agent.health <= 0) continue;
-      const wx = agent.x * TILE_SIZE;
-      const wz = agent.z * TILE_SIZE;
-      const dist = Math.hypot(groundPoint.x - wx, groundPoint.z - wz);
-      if (dist < bestDist) { bestDist = dist; hit = agent; }
-    }
+    const hit = findNearestAgent(groundPoint.x, groundPoint.z);
 
     if (hit) {
       if (selectedAgent) selectedAgent.selected = false;
@@ -348,17 +431,26 @@ async function init() {
 
     const discovered = conceptGraph.getDiscoveredConcepts(aliveIds);
     const list = document.getElementById('concepts-list');
+    const MAX_VISIBLE = 3;
     if (discovered.length === 0) {
       list.innerHTML = '<em>None yet...</em>';
     } else {
-      list.innerHTML = discovered.map(c =>
+      const recent = discovered.slice(-MAX_VISIBLE);
+      let html = recent.map(c =>
         `<div class="concept-item">
           <span class="concept-dot"></span>
           <span>${c.icon ?? ''} ${c.name}</span>
           <span class="concept-spread">${c.knownCount}/${alive}</span>
         </div>`
       ).join('');
+      if (discovered.length > MAX_VISIBLE) {
+        html += `<div class="discoveries-view-all" id="discoveries-view-all">View all (${discovered.length})</div>`;
+      }
+      list.innerHTML = html;
     }
+    // Cache for modal
+    window._lastDiscovered = discovered;
+    window._lastAlive = alive;
 
     if (selectedAgent && selectedAgent.health > 0) {
       updateInfoPanel(selectedAgent);
@@ -373,7 +465,9 @@ async function init() {
   const TILE_LABELS = {
     [TileType.DEEP_WATER]: { icon: '🌊', name: 'Deep Water' },
     [TileType.WATER]:    { icon: '🌊', name: 'Water' },
+    [TileType.BEACH]:    { icon: '🏖️', name: 'Beach' },
     [TileType.GRASS]:    { icon: '🌿', name: 'Grassland' },
+    [TileType.DESERT]:   { icon: '🏜️', name: 'Desert' },
     [TileType.FOREST]:   { icon: '🌲', name: 'Forest' },
     [TileType.STONE]:    { icon: '🪨', name: 'Stone' },
     [TileType.MOUNTAIN]: { icon: '⛰️', name: 'Mountain' },
@@ -382,7 +476,9 @@ async function init() {
   const TILE_FEATURES = {
     [TileType.DEEP_WATER]: 'Open ocean. Deep fish patrol these waters. Requires Sailing to cross.',
     [TileType.WATER]:    'Coastal water. Shallow fish swim here. Requires Sailing to cross.',
+    [TileType.BEACH]:    'Sandy shore between land and sea. Crabs scuttle along the waterline.',
     [TileType.GRASS]:    'Berries, sheep, and pigs. Good for gathering food.',
+    [TileType.DESERT]:   'Arid, sun-baked land. Little grows here — harsh but traversable.',
     [TileType.FOREST]:   'Trees and wild game. Rich in food and resources.',
     [TileType.STONE]:    'Rocks and clay. Good for stone tools and pottery.',
     [TileType.MOUNTAIN]: 'Peaks and snow. Requires Mountain Climbing to traverse.',
@@ -401,11 +497,22 @@ async function init() {
           <div class="info-bar-wrap"><div class="info-bar-fill" style="width:${pct}%"></div></div>
         </div>`;
     }
+    // Ground items on this tile
+    let groundHtml = '';
+    const groundItems = world.tileItems?.getItems(tile.x, tile.z) ?? [];
+    if (groundItems.length > 0) {
+      groundHtml = `<div style="margin-top:8px;font-size:11px;opacity:.7">Items on ground:</div>` +
+        groundItems.map(g => {
+          const def = itemDefs.get(g.itemId);
+          return `<div style="font-size:12px;margin-top:2px">${def?.icon ?? '•'} ${def?.name ?? g.itemId} ×${g.quantity}</div>`;
+        }).join('');
+    }
     document.getElementById('info-content').innerHTML = `
       <div class="info-name">${info.icon} ${info.name}</div>
       <div class="info-state" style="opacity:.7;font-size:12px">Tile (${tile.x}, ${tile.z})</div>
       <div style="margin-top:10px;font-size:12px;opacity:.85">${features}</div>
       ${resourceHtml}
+      ${groundHtml}
     `;
   }
 
@@ -434,7 +541,7 @@ async function init() {
         </div>
         <div class="info-row">
           <span class="info-label">Age</span>
-          <span style="font-size:11px;opacity:.5">${Math.floor(agent.age)}s / ${Math.floor(agent.maxAge)}s ${agent.isAdult ? '' : '· juvenile'}</span>
+          <span style="font-size:11px;opacity:.5">${Math.floor(agent.age)}s / ${Math.floor(agent.lifeExpectancy)}s ${agent.isAdult ? '' : '· juvenile'}${agent.ageBonus > 0 ? ` · +${Math.round(agent.ageBonus * 100)}%` : ''}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Curiosity</span>
@@ -442,6 +549,13 @@ async function init() {
         </div>
         ${agent.task ? `<div class="info-row"><span class="info-label">Task</span><span class="info-tag">${Agent.TASKS[agent.task]?.icon ?? '•'} ${Agent.TASKS[agent.task]?.name ?? agent.task}</span></div>` : ''}
       </div>
+      ${agent.inventory.stacks.length > 0 ? `
+        <div style="margin-top:8px;font-size:11px;opacity:.7">Inventory (${agent.inventory.currentWeight(itemDefs).toFixed(1)}/${agent.inventory.maxWeight.toFixed(0)})</div>
+        <div style="margin-top:2px">${agent.inventory.stacks.map(s => {
+          const d = itemDefs.get(s.itemId);
+          return `<span class="info-tag">${d?.icon ?? '•'} ${d?.name ?? s.itemId} ×${s.quantity}</span>`;
+        }).join('')}</div>
+      ` : ''}
       ${concepts ? `<div class="info-tags">${concepts}</div>` : '<div style="opacity:.3;font-size:12px;margin-top:10px">No discoveries yet</div>'}
     `;
   }
@@ -512,7 +626,7 @@ async function init() {
       }
 
       // Regenerate tile food resources (season-aware)
-      world.updateResources(delta, time.season);
+      world.updateResources(delta, time.season, itemDefs.size > 0 ? itemDefs : null);
 
       // Handle agent-lit campfires
       if (world.campfireEvents?.length) {
@@ -531,7 +645,7 @@ async function init() {
       for (const agent of agents) {
         if (agent?.health > 0) {
           try {
-            agent.tick(delta, world, agents, conceptGraph, wMult);
+            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null);
           } catch (e) {
             console.error('[World] Agent tick failed', agent?.id, e);
           }
@@ -593,6 +707,7 @@ async function init() {
     wr.setTimeOfDay(time.timeOfDay);
     wr.setWeather(weather.meta);
     terrainRenderer.updateAnimals(delta > 0 ? delta : 0);
+    terrainRenderer.updateVegetation(world);
     ar.update();
     buildingRenderer.checkAgents(agents);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);

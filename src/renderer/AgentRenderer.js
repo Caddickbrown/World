@@ -34,12 +34,19 @@ export class AgentRenderer {
     this._eyeMat   = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.5 });
 
     // Shared boat geometries
-    this._boatHullGeom = new THREE.BoxGeometry(0.70, 0.11, 0.32);
-    this._boatMastGeom = new THREE.CylinderGeometry(0.018, 0.018, 0.52, 5);
-    this._sailGeom     = new THREE.PlaneGeometry(0.24, 0.34);
-    this._boatHullMat  = new THREE.MeshStandardMaterial({ color: 0x8b5e3c, roughness: 0.9 });
-    this._boatMastMat  = new THREE.MeshStandardMaterial({ color: 0x5a3e28, roughness: 0.9 });
-    this._sailMat      = new THREE.MeshStandardMaterial({ color: 0xf0e8d0, side: THREE.DoubleSide, roughness: 0.8 });
+    this._boatHullGeom  = new THREE.BoxGeometry(0.80, 0.20, 0.38);
+    this._boatDeckGeom  = new THREE.BoxGeometry(0.74, 0.03, 0.34);
+    this._boatSideGeom  = new THREE.BoxGeometry(0.80, 0.14, 0.03);
+    this._boatMastGeom  = new THREE.CylinderGeometry(0.020, 0.022, 0.68, 5);
+    this._boatYardGeom  = new THREE.CylinderGeometry(0.012, 0.012, 0.38, 4);
+    this._sailGeom      = new THREE.PlaneGeometry(0.34, 0.44);
+    this._boatFlagGeom  = new THREE.PlaneGeometry(0.09, 0.06);
+    this._boatHullMat   = new THREE.MeshStandardMaterial({ color: 0x6b3d1e, roughness: 0.9 });
+    this._boatDeckMat   = new THREE.MeshStandardMaterial({ color: 0xb8864e, roughness: 0.75 });
+    this._boatSideMat   = new THREE.MeshStandardMaterial({ color: 0x5a2e10, roughness: 0.9 });
+    this._boatMastMat   = new THREE.MeshStandardMaterial({ color: 0x4a3220, roughness: 0.9 });
+    this._sailMat       = new THREE.MeshStandardMaterial({ color: 0xf4edcc, side: THREE.DoubleSide, roughness: 0.75 });
+    this._boatFlagMat   = new THREE.MeshStandardMaterial({ color: 0xcc2222, side: THREE.DoubleSide });
 
     // One shared selection ring, repositioned each frame
     this._ring = new THREE.Mesh(
@@ -55,26 +62,88 @@ export class AgentRenderer {
     this._ring.visible = false;
     this.scene.add(this._ring);
 
+    // Speech bubble shared geometry/material
+    this._speechGeom = new THREE.PlaneGeometry(0.35, 0.18);
+    this._speechCanvas = this._createSpeechCanvas();
+    this._speechTex = new THREE.CanvasTexture(this._speechCanvas);
+    this._speechTex.needsUpdate = true;
+    this._speechMat = new THREE.MeshBasicMaterial({
+      map: this._speechTex,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
     for (const agent of this.agents) {
       this._createMeshFor(agent);
     }
   }
 
-  _buildBoat() {
-    const bg = new THREE.Group();
+  _createSpeechCanvas() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    // Rounded rect bubble
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.roundRect(2, 2, 60, 24, 8);
+    ctx.fill();
+    // Small triangle pointer
+    ctx.beginPath();
+    ctx.moveTo(24, 26);
+    ctx.lineTo(32, 32);
+    ctx.lineTo(36, 26);
+    ctx.fill();
+    // Three dots
+    ctx.fillStyle = '#555';
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(20 + i * 12, 14, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return canvas;
+  }
 
+  _buildBoat() {
+    const bg  = new THREE.Group();
+    const BY  = -0.30; // base Y — hull sits just below waterline
+
+    // Main hull — deep rectangular body
     const hull = new THREE.Mesh(this._boatHullGeom, this._boatHullMat);
-    hull.position.y = -0.27; // below agent torso, sits on water surface
+    hull.position.set(0, BY + 0.10, 0);
     hull.castShadow = true;
 
+    // Deck — lighter wood plank surface on top of hull
+    const deck = new THREE.Mesh(this._boatDeckGeom, this._boatDeckMat);
+    deck.position.set(0, BY + 0.215, 0);
+
+    // Port & starboard side rails (thin dark planks standing up on deck edges)
+    const portSide = new THREE.Mesh(this._boatSideGeom, this._boatSideMat);
+    portSide.position.set(0, BY + 0.29, +0.185);
+
+    const starbdSide = new THREE.Mesh(this._boatSideGeom, this._boatSideMat);
+    starbdSide.position.set(0, BY + 0.29, -0.185);
+
+    // Mast — taller, stepped slightly forward of centre
     const mast = new THREE.Mesh(this._boatMastGeom, this._boatMastMat);
-    mast.position.set(0, -0.27 + 0.26, 0);
+    mast.position.set(0.06, BY + 0.22 + 0.34, 0);
 
+    // Yardarm — horizontal cross-beam the sail hangs from
+    const yard = new THREE.Mesh(this._boatYardGeom, this._boatMastMat);
+    yard.rotation.z = Math.PI / 2;
+    yard.position.set(0.06, BY + 0.22 + 0.56, 0);
+
+    // Sail — large, centred on mast between yard and mid-mast
     const sail = new THREE.Mesh(this._sailGeom, this._sailMat);
-    sail.position.set(0.01, -0.27 + 0.33, 0);
-    sail.rotation.y = Math.PI / 2; // sail billows sideways
+    sail.position.set(0.07, BY + 0.22 + 0.44, 0);
+    sail.rotation.y = Math.PI / 2;
 
-    bg.add(hull, mast, sail);
+    // Flag at mast-top
+    const flag = new THREE.Mesh(this._boatFlagGeom, this._boatFlagMat);
+    flag.position.set(0.10, BY + 0.22 + 0.70, 0);
+
+    bg.add(hull, deck, portSide, starbdSide, mast, yard, sail, flag);
     return bg;
   }
 
@@ -103,12 +172,17 @@ export class AgentRenderer {
     const boatGroup = this._buildBoat();
     boatGroup.visible = false;
 
+    // Speech bubble
+    const speech = new THREE.Mesh(this._speechGeom, this._speechMat);
+    speech.position.set(0.15, 0.72, 0);
+    speech.visible = false;
+
     const group = new THREE.Group();
-    group.add(body, head, eyeL, eyeR, boatGroup);
+    group.add(body, head, eyeL, eyeR, boatGroup, speech);
     group.userData.agentId = agent.id;
 
     this.scene.add(group);
-    this.meshes.push({ group, body, bodyMat, headMat, boatGroup, agent });
+    this.meshes.push({ group, body, bodyMat, headMat, boatGroup, speech, agent });
   }
 
   /** Call this when a new agent is born at runtime */
@@ -128,14 +202,24 @@ export class AgentRenderer {
     this._eyeGeom.dispose();
     this._eyeMat.dispose();
     this._boatHullGeom.dispose();
+    this._boatDeckGeom.dispose();
+    this._boatSideGeom.dispose();
     this._boatMastGeom.dispose();
+    this._boatYardGeom.dispose();
     this._sailGeom.dispose();
+    this._boatFlagGeom.dispose();
     this._boatHullMat.dispose();
+    this._boatDeckMat.dispose();
+    this._boatSideMat.dispose();
     this._boatMastMat.dispose();
     this._sailMat.dispose();
+    this._boatFlagMat.dispose();
     this.scene.remove(this._ring);
     this._ring.geometry.dispose();
     this._ring.material.dispose();
+    this._speechGeom.dispose();
+    this._speechMat.dispose();
+    this._speechTex.dispose();
     this.meshes = [];
   }
 
@@ -157,7 +241,7 @@ export class AgentRenderer {
       }
     }
 
-    for (const { group, bodyMat, boatGroup, agent } of this.meshes) {
+    for (const { group, bodyMat, boatGroup, speech, agent } of this.meshes) {
       if (agent.health <= 0) {
         bodyMat.color.copy(DEAD_COLOR);
         bodyMat.emissive.set(0x000000);
@@ -191,10 +275,24 @@ export class AgentRenderer {
         bodyMat.emissive.setHex(agent.selected ? 0x222244 : 0x000000);
       }
 
+      // Speech bubble: only agents who know 'language' can show speech bubbles
+      if (speech) {
+        const isChatting = agent.socialTimer > 3.5 && agent.knowledge.has('language');
+        speech.visible = isChatting;
+        if (isChatting) {
+          // Billboard: face camera
+          speech.rotation.y = -group.rotation.y;
+        }
+      }
+
       if (agent.selected) ringTarget = group;
 
-      // Juveniles are visibly smaller
-      group.scale.setScalar(agent.isAdult ? 1.0 : 0.55);
+      // Smooth growth from child (0.55) to adult (1.0) — plateaus at maturity (age 40)
+      const maturityAge = 40;
+      const t = Math.min(1, agent.age / maturityAge);
+      const smooth = t * t * (3 - 2 * t);  // smoothstep: slower at start/end, faster mid-growth
+      const scale = 0.55 + 0.45 * smooth;
+      group.scale.setScalar(scale);
 
       // Slight bob
       group.position.y += Math.sin(Date.now() * 0.003 + agent.id * 1.3) * 0.04;

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -c src/simulation/Inventory.js)",
+      "Bash(node -c src/simulation/TileItems.js)",
+      "Bash(node -c src/simulation/GatheringSystem.js)",
+      "Bash(node -c src/simulation/World.js)",
+      "Bash(node -c src/main.js)",
+      "Bash(node -c src/renderer/TerrainRenderer.js)",
+      "Bash(node -e \"JSON.parse\\(require\\(''fs''\\).readFileSync\\(''data/items.json'',''utf8''\\)\\); console.log\\(''items.json OK''\\)\")",
+      "Bash(node -c src/simulation/Agent.js)",
+      "Bash(node -c src/renderer/AgentRenderer.js)",
+      "Bash(node -c src/renderer/BuildingRenderer.js)",
+      "Bash(node --check src/main.js 2>&1 || node -e \"require\\('acorn'\\).parse\\(require\\('fs'\\).readFileSync\\('src/renderer/TerrainRenderer.js','utf8'\\), {ecmaVersion:2022, sourceType:'module'}\\)\" 2>&1 | head -5)",
+      "Bash(node --check src/renderer/TerrainRenderer.js 2>&1 && node --check src/main.js 2>&1 && node --check src/renderer/AgentRenderer.js 2>&1 && echo \"All OK\")",
+      "Bash(node --check src/renderer/TerrainRenderer.js && node --check src/renderer/AgentRenderer.js && echo \"All OK\")",
+      "Bash(node --check src/renderer/TerrainRenderer.js && echo \"OK\")"
+    ]
+  }
+}

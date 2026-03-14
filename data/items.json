@@ -1,0 +1,147 @@
+[
+  {
+    "id": "berries",
+    "name": "Berries",
+    "category": "food",
+    "icon": "🫐",
+    "weight": 0.2,
+    "stackSize": 10,
+    "effects": { "hunger": 0.12 },
+    "spoilRate": 0.008,
+    "gatherSource": {
+      "tileTypes": ["GRASS", "FOREST"],
+      "activity": "foraging",
+      "baseYield": [1, 3],
+      "knowledge": []
+    }
+  },
+  {
+    "id": "fish",
+    "name": "Fish",
+    "category": "food",
+    "icon": "🐟",
+    "weight": 0.5,
+    "stackSize": 5,
+    "effects": { "hunger": 0.20 },
+    "spoilRate": 0.012,
+    "cookable": true,
+    "cookedId": "cooked_fish",
+    "gatherSource": {
+      "tileTypes": ["GRASS", "FOREST"],
+      "adjacentTo": "WATER",
+      "activity": "fishing",
+      "baseYield": [1, 2],
+      "knowledge": ["fishing"]
+    }
+  },
+  {
+    "id": "cooked_fish",
+    "name": "Cooked Fish",
+    "category": "food",
+    "icon": "🍳",
+    "weight": 0.5,
+    "stackSize": 5,
+    "effects": { "hunger": 0.35 },
+    "spoilRate": 0.005
+  },
+  {
+    "id": "meat",
+    "name": "Raw Meat",
+    "category": "food",
+    "icon": "🥩",
+    "weight": 0.8,
+    "stackSize": 5,
+    "effects": { "hunger": 0.18 },
+    "spoilRate": 0.015,
+    "cookable": true,
+    "cookedId": "cooked_meat",
+    "gatherSource": {
+      "tileTypes": ["FOREST"],
+      "activity": "hunting",
+      "baseYield": [1, 2],
+      "knowledge": ["hunting"]
+    }
+  },
+  {
+    "id": "cooked_meat",
+    "name": "Cooked Meat",
+    "category": "food",
+    "icon": "🍖",
+    "weight": 0.8,
+    "stackSize": 5,
+    "effects": { "hunger": 0.40 },
+    "spoilRate": 0.004
+  },
+  {
+    "id": "herbs",
+    "name": "Herbs",
+    "category": "food",
+    "icon": "🌿",
+    "weight": 0.1,
+    "stackSize": 10,
+    "effects": { "hunger": 0.05, "health": 0.02 },
+    "spoilRate": 0.006,
+    "gatherSource": {
+      "tileTypes": ["FOREST"],
+      "activity": "foraging",
+      "baseYield": [0, 2],
+      "knowledge": ["medicine"]
+    }
+  },
+  {
+    "id": "wood",
+    "name": "Wood",
+    "category": "material",
+    "icon": "🪵",
+    "weight": 1.5,
+    "stackSize": 5,
+    "gatherSource": {
+      "tileTypes": ["FOREST"],
+      "activity": "woodcutting",
+      "baseYield": [1, 2],
+      "knowledge": []
+    }
+  },
+  {
+    "id": "stone",
+    "name": "Stone",
+    "category": "material",
+    "icon": "🪨",
+    "weight": 2.0,
+    "stackSize": 5,
+    "gatherSource": {
+      "tileTypes": ["STONE"],
+      "activity": "mining",
+      "baseYield": [1, 2],
+      "knowledge": []
+    }
+  },
+  {
+    "id": "hide",
+    "name": "Hide",
+    "category": "material",
+    "icon": "🟫",
+    "weight": 1.0,
+    "stackSize": 5,
+    "gatherSource": {
+      "tileTypes": ["FOREST"],
+      "activity": "hunting",
+      "baseYield": [0, 1],
+      "knowledge": ["hunting"]
+    }
+  },
+  {
+    "id": "ore",
+    "name": "Ore",
+    "category": "material",
+    "icon": "⛏️",
+    "weight": 2.5,
+    "stackSize": 3,
+    "gatherSource": {
+      "tileTypes": ["STONE", "MOUNTAIN"],
+      "activity": "mining",
+      "baseYield": [0, 1],
+      "knowledge": ["metal_tools"]
+    }
+  }
+]

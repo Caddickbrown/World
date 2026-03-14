@@ -1,4 +1,6 @@
 import { TileType } from './World.js';
+import { Inventory } from './Inventory.js';
+import { GatheringSystem } from './GatheringSystem.js';
 
 let nextId = 1;
 
@@ -36,14 +38,14 @@ export class Agent {
     this.curiosity  = 0.3 + Math.random() * 0.5;
     this.age        = 0;
     this.health     = 1.0;
-    this.maxAge     = 60 + Math.random() * 60; // game-seconds (die of old age)
+    this.maxAge     = 180 + Math.random() * 180; // game-seconds (die of old age)
 
     this.restTimer    = 0;
     this.discoveryFlash = 0;  // countdown for glow effect (game-sec)
     this.socialTimer  = Math.random() * SOCIAL_COOLDOWN;
 
     // Reproduction: becomes eligible after maturity, then on cooldown after each birth
-    this.reproductionCooldown = 8 + Math.random() * 12; // game-sec until first eligibility
+    this.reproductionCooldown = 24 + Math.random() * 36; // game-sec until first eligibility
     this.isAdult = false; // flips true once age >= maturity threshold
 
     this.selected = false;
@@ -52,6 +54,9 @@ export class Agent {
 
     /** Task role (gatherer, teacher, scout, carer) — set when Organisation is discovered */
     this.task = null;
+
+    /** Inventory system */
+    this.inventory = new Inventory();
 
     /** How often the agent re-evaluates its needs even mid-wander (game-sec) */
     this._needsCheckTimer = 2 + Math.random() * 3;
@@ -70,6 +75,20 @@ export class Agent {
     };
   }
 
+  /** Calculate current life expectancy bonus from knowledge */
+  get ageBonus() {
+    return (this.knowledge.has('fire') ? 0.10 : 0) + (this.knowledge.has('shelter') ? 0.10 : 0)
+      + (this.knowledge.has('cooking') ? 0.15 : 0) + (this.knowledge.has('medicine') ? 0.20 : 0)
+      + (this.knowledge.has('clothing') ? 0.08 : 0) + (this.knowledge.has('housing') ? 0.12 : 0)
+      + (this.knowledge.has('community') ? 0.10 : 0) + (this.knowledge.has('agriculture') ? 0.15 : 0)
+      + (this.knowledge.has('preservation') ? 0.10 : 0) + (this.knowledge.has('herding') ? 0.08 : 0);
+  }
+
+  /** Effective max age including knowledge bonuses */
+  get lifeExpectancy() {
+    return this.maxAge * (1 + this.ageBonus);
+  }
+
   _adoptTask(allAgents) {
     if (this.task || !this.knowledge.has('organisation')) return;
     const tasks = Object.keys(Agent.TASKS);
@@ -81,7 +100,7 @@ export class Agent {
 
   // ── Main tick ─────────────────────────────────────────────────────────
 
-  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0) {
+  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null) {
     this.age += delta;
 
     if (this.knowledge.has('organisation') && !this.task) this._adoptTask(allAgents);
@@ -93,14 +112,14 @@ export class Agent {
     const hasMedicine = this.knowledge.has('medicine');
 
     // Concepts extend lifespan
-    const ageBonus = (hasFire ? 0.15 : 0) + (hasShelter ? 0.10 : 0) + (hasCooking ? 0.20 : 0) + (hasMedicine ? 0.25 : 0);
-    if (this.age > this.maxAge * (1 + ageBonus)) {
+    if (this.age > this.lifeExpectancy) {
+      this._dropAllItems(world);
       this.health = 0;
       return; // dead of old age
     }
 
     // Maturity
-    if (!this.isAdult && this.age >= 20) this.isAdult = true;
+    if (!this.isAdult && this.age >= 40) this.isAdult = true;
     if (this.reproductionCooldown > 0) this.reproductionCooldown -= delta;
 
     // Weather protection: fire, shelter, and clothing reduce harsh-weather energy penalty
@@ -119,8 +138,22 @@ export class Agent {
     if (this.discoveryFlash > 0) this.discoveryFlash -= delta;
     if (this._fireCooldown > 0) this._fireCooldown -= delta;
 
+    // Inventory spoilage
+    if (itemDefs && this.inventory.stacks.length > 0) {
+      let spoilMult = 1.0;
+      if (this.knowledge.has('preservation')) spoilMult *= 0.50;
+      if (this.knowledge.has('pottery')) spoilMult *= 0.75;
+      this.inventory.tickSpoilageWithMult(delta, itemDefs, spoilMult);
+    }
+
+    // Carry capacity bonuses from knowledge
+    this.inventory.maxWeight = 10.0
+      + (this.knowledge.has('weaving') ? 2.0 : 0)
+      + (this.knowledge.has('animal_domestication') ? 4.0 : 0);
+
     // Store for use in _decideAction
     this._lastWeatherMult = envMult;
+    this._itemDefs = itemDefs;
 
     // Fire-lighting: cold agent who knows fire will light a campfire on their tile
     if (hasFire && envMult >= 1.2 && this._fireCooldown <= 0) {
@@ -193,27 +226,44 @@ export class Agent {
 
   _onArrival(world, allAgents, conceptGraph) {
     if (!allAgents) allAgents = [];
-    // Eating: arriving at food tile satisfies hunger
+    const itemDefs = this._itemDefs;
+
     if (this.state === AgentState.GATHERING) {
       const tile = world.getTile(Math.floor(this.x), Math.floor(this.z));
-      if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST)) {
+
+      if (itemDefs && tile) {
+        // New inventory-based gathering
+        const gathered = GatheringSystem.gather(this, tile, world, itemDefs);
+        for (const { itemId, quantity } of gathered) {
+          const added = this.inventory.add(itemId, quantity, itemDefs);
+          // Overflow goes to ground
+          const overflow = quantity - added;
+          if (overflow > 0 && world.tileItems) {
+            world.tileItems.add(tile.x, tile.z, itemId, overflow);
+          }
+        }
+        // Bridge behavior: if hungry, eat immediately after gathering
+        if (this.needs.hunger < 0.6) {
+          this._tryEat(itemDefs);
+        }
+      } else if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST)) {
+        // Fallback: old direct-hunger system if itemDefs not loaded
         let toolMult  = this.knowledge.has('stone_tools') ? 1.20 : 1.0;
         if (this.knowledge.has('metal_tools')) toolMult *= 1.25;
-        if (this.knowledge.has('fishing')) toolMult *= 1.1;
-        if (this.knowledge.has('animal_domestication')) toolMult *= 1.25;
-        if (this.knowledge.has('herding')) toolMult *= 1.15;
         if (this.knowledge.has('hunting') && tile.type === TileType.FOREST) toolMult *= 1.35;
         if (this.knowledge.has('agriculture') && tile.type === TileType.GRASS) toolMult *= 1.35;
         let cookMult  = this.knowledge.has('cooking') ? 1.60 : 1.0;
-        if (this.knowledge.has('pottery')) cookMult *= 1.15;
-        if (this.knowledge.has('preservation')) cookMult *= 1.12;
-        const taskGatherBonus = this.task && Agent.TASKS[this.task]?.gatherBonus ? Agent.TASKS[this.task].gatherBonus : 1.0;
-        const yield_    = Math.max(0.15, tile.resource); // at least 15% even when almost depleted
-        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * taskGatherBonus * yield_);
-        // Deplete the tile (better tools = more careful harvesting = less depletion)
+        const yield_    = Math.max(0.15, tile.resource);
+        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * yield_);
         tile.resource = Math.max(0, tile.resource - 0.28 / toolMult);
       }
     }
+
+    // Pick up ground items when arriving at any tile
+    if (itemDefs && world.tileItems) {
+      this._pickUpGroundItems(world, itemDefs);
+    }
+
     this._decideAction(world, allAgents);
   }
 
@@ -223,8 +273,16 @@ export class Agent {
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
     const envMult = this._lastWeatherMult ?? 1.0;
 
-    // Critical hunger — immediately seek food
+    // Critical hunger — eat from inventory first, then seek food
     if (this.needs.hunger < gatherThreshold) {
+      if (this._itemDefs && this._tryEat(this._itemDefs)) {
+        // Ate from inventory, re-evaluate
+        if (this.needs.hunger >= gatherThreshold) {
+          this.state = AgentState.WANDERING;
+          this._pickWanderTarget(world, allAgents);
+          return;
+        }
+      }
       this.state = AgentState.GATHERING;
       this._pickGatherTarget(world);
       return;
@@ -358,7 +416,7 @@ export class Agent {
     if (this.needs.hunger < 0.40 || other.needs.hunger < 0.40) return;
     if (this.needs.energy < 0.20 || other.needs.energy < 0.20) return;
 
-    const baseCooldown = 18 + Math.random() * 20;
+    const baseCooldown = 45 + Math.random() * 45;
     const communityMult = (this.knowledge.has('community') || other.knowledge.has('community')) ? 0.82 : 1.0;
     const cooldown = baseCooldown * communityMult;
     this.reproductionCooldown  = cooldown;
@@ -368,6 +426,61 @@ export class Agent {
     const cx = (this.x + other.x) / 2 + (Math.random() - 0.5) * 1.5;
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
     conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name });
+  }
+
+  // ── Inventory actions ─────────────────────────────────────────────────
+
+  /** Try to eat the best food from inventory. Returns true if ate. */
+  _tryEat(itemDefs) {
+    if (!itemDefs) return false;
+    const food = this.inventory.getBestFood(itemDefs);
+    if (!food) return false;
+    const def = itemDefs.get(food.itemId);
+    if (!def) return false;
+
+    // Consume one unit
+    this.inventory.remove(food.itemId, 1);
+    this.needs.hunger = Math.min(1.0, this.needs.hunger + (def.effects?.hunger ?? 0.10));
+    if (def.effects?.health) {
+      this.health = Math.min(1.0, this.health + def.effects.health);
+    }
+    return true;
+  }
+
+  /** Pick up useful items from the ground on the current tile. */
+  _pickUpGroundItems(world, itemDefs) {
+    const tx = Math.floor(this.x);
+    const tz = Math.floor(this.z);
+    const groundItems = world.tileItems.getItems(tx, tz);
+    if (groundItems.length === 0) return;
+
+    for (let i = groundItems.length - 1; i >= 0; i--) {
+      const g = groundItems[i];
+      const def = itemDefs.get(g.itemId);
+      if (!def) continue;
+
+      // Pick up food when hungry, or any useful items when we have capacity
+      const wantFood = def.category === 'food' && this.needs.hunger < 0.7;
+      const wantAny = !this.inventory.isFull(g.itemId, itemDefs);
+      if (!wantFood && !wantAny) continue;
+
+      const qty = Math.min(g.quantity, 3); // pick up at most 3 at a time
+      const added = this.inventory.add(g.itemId, qty, itemDefs);
+      if (added > 0) {
+        world.tileItems.remove(tx, tz, g.itemId, added);
+      }
+    }
+  }
+
+  /** Drop all inventory items to the ground (called on death). */
+  _dropAllItems(world) {
+    if (!world.tileItems || this.inventory.stacks.length === 0) return;
+    const tx = Math.floor(this.x);
+    const tz = Math.floor(this.z);
+    const items = this.inventory.dropAll();
+    for (const { itemId, quantity } of items) {
+      world.tileItems.add(tx, tz, itemId, quantity);
+    }
   }
 }
 

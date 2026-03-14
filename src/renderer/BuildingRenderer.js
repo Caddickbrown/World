@@ -28,7 +28,7 @@ export class BuildingRenderer {
       const tx = Math.floor(agent.x);
       const tz = Math.floor(agent.z);
       const tile = this.world.getTile(tx, tz);
-      if (!tile || tile.type === TileType.WATER || tile.type === TileType.MOUNTAIN) continue;
+      if (!tile || tile.type === TileType.WATER || tile.type === TileType.DEEP_WATER || tile.type === TileType.MOUNTAIN) continue;
 
       const key = `${tx},${tz}`;
       const existing = this._buildings.get(key);

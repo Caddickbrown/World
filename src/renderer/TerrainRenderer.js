@@ -5,7 +5,9 @@ import { TileType, TILE_SIZE } from '../simulation/World.js';
 const TILE_HEIGHT = {
   [TileType.DEEP_WATER]: 0.02,
   [TileType.WATER]:    0.05,
+  [TileType.BEACH]:    0.10,
   [TileType.GRASS]:    0.14,
+  [TileType.DESERT]:   0.12,
   [TileType.FOREST]:   0.24,
   [TileType.STONE]:    0.34,
   [TileType.MOUNTAIN]: 1.50,
@@ -15,7 +17,9 @@ const TILE_HEIGHT = {
 const TILE_COLOR_HSL = {
   [TileType.DEEP_WATER]: [215, 80, 30],
   [TileType.WATER]:    [208, 82, 55],
+  [TileType.BEACH]:    [ 42, 60, 72],
   [TileType.GRASS]:    [ 94, 62, 50],
+  [TileType.DESERT]:   [ 38, 55, 62],
   [TileType.FOREST]:   [132, 66, 30],
   [TileType.STONE]:    [ 28, 22, 62],
   [TileType.MOUNTAIN]: [215, 18, 68],
@@ -49,7 +53,9 @@ export class TerrainRenderer {
     const buckets = {
       [TileType.DEEP_WATER]: [],
       [TileType.WATER]:    [],
+      [TileType.BEACH]:    [],
       [TileType.GRASS]:    [],
+      [TileType.DESERT]:   [],
       [TileType.FOREST]:   [],
       [TileType.STONE]:    [],
       [TileType.MOUNTAIN]: [],
@@ -126,80 +132,203 @@ export class TerrainRenderer {
     return Math.sin(x * 127.1 + z * 311.7 + offset * 74.5) * 0.5 + 0.5;
   }
 
+  // Smooth spatially-correlated noise for forest biome regions (~48-tile wavelength).
+  // Returns a value in approximately [-1, 1].
+  _forestBiomeNoise(x, z) {
+    const s = this.world.seed * 0.137;
+    return (
+      Math.sin(x * 0.13 + s * 1.7)  * Math.cos(z * 0.11 + s * 0.83) * 0.60 +
+      Math.cos(x * 0.20 + z * 0.16  + s * 2.3)                       * 0.40
+    );
+  }
+
+  // ── Plant system helpers ────────────────────────────────────────────────
+
+  /** Expand tiles → [{tile, sub}] placements. Each tile gets 1, 2, or 3 entries. */
+  _expandPlacements(tiles, seed = 50, weights = [0.45, 0.80]) {
+    const out = [];
+    for (const tile of tiles) {
+      const r = this._rng(tile.x, tile.z, seed);
+      const count = r < weights[0] ? 1 : r < weights[1] ? 2 : 3;
+      for (let sub = 0; sub < count; sub++) out.push({ tile, sub });
+    }
+    return out;
+  }
+
+  /** Create an InstancedMesh, register it, and return it. */
+  _makeInstanced(geom, mat, count, castShadow = true, receiveShadow = true) {
+    const mesh = new THREE.InstancedMesh(geom, mat, count);
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = receiveShadow;
+    this.scene.add(mesh);
+    this._meshes.push(mesh);
+    return mesh;
+  }
+
+  /** Apply a transform function to every placement and upload all matrices. */
+  _applyTransforms(placements, mesh, dummy, fn) {
+    placements.forEach(({ tile, sub }, i) => {
+      const rng = s => this._rng(tile.x, tile.z, s + sub * 13);
+      const { pos, scale, rot = [0, 0, 0] } = fn({ tile, sub }, rng);
+      dummy.position.set(...pos);
+      dummy.scale.set(...scale);
+      dummy.rotation.set(...rot);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+
   _buildVegetation(buckets) {
     const dummy = new THREE.Object3D();
+    this._plantUpdaters = []; // { mesh, placements, updateFn } — driven by updateVegetation
 
-    // ── Berry bushes on GRASS tiles ───────────────────────────────────────
-    const grassFood = buckets[TileType.GRASS].filter(t => this._rng(t.x, t.z) < 0.55);
-    if (grassFood.length > 0) {
-      const bushGeom = new THREE.SphereGeometry(0.22, 6, 5);
-      const bushMat  = new THREE.MeshLambertMaterial({ color: 0x4ade80 });
-      const bushMesh = new THREE.InstancedMesh(bushGeom, bushMat, grassFood.length);
-      const surfY = TerrainRenderer.surfaceY(TileType.GRASS);
-
-      grassFood.forEach((tile, i) => {
-        const ox = (this._rng(tile.x, tile.z, 1) - 0.5) * 0.9;
-        const oz = (this._rng(tile.x, tile.z, 2) - 0.5) * 0.9;
-        dummy.position.set(
-          tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
-          surfY + 0.16,
-          tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+    // ── Berry bushes on GRASS ─────────────────────────────────────────────
+    {
+      const SURF      = TerrainRenderer.surfaceY(TileType.GRASS);
+      const bushTiles = buckets[TileType.GRASS].filter(t => this._rng(t.x, t.z) < 0.55);
+      if (bushTiles.length > 0) {
+        const placements = this._expandPlacements(bushTiles);
+        const mesh = this._makeInstanced(
+          new THREE.SphereGeometry(0.22, 6, 5),
+          new THREE.MeshLambertMaterial({ color: 0x4ade80 }),
+          placements.length,
         );
-        dummy.scale.set(1, 0.7, 1);
-        dummy.updateMatrix();
-        bushMesh.setMatrixAt(i, dummy.matrix);
-      });
-      // Initialise per-instance colours (used by updateVegetation for resource tinting)
-      const _bc = new THREE.Color(0x4ade80);
-      for (let _i = 0; _i < grassFood.length; _i++) bushMesh.setColorAt(_i, _bc);
-      if (bushMesh.instanceColor) bushMesh.instanceColor.needsUpdate = true;
-
-      bushMesh.castShadow = true;
-      bushMesh.receiveShadow = true;
-      bushMesh.instanceMatrix.needsUpdate = true;
-      this.scene.add(bushMesh);
-      this._meshes.push(bushMesh);
-      this._bushMesh = bushMesh;
-      this._grassFoodTiles = grassFood;
+        this._applyTransforms(placements, mesh, dummy, ({ tile }, rng) => {
+          const sz = 0.75 + rng(5) * 0.55;
+          return {
+            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 1.1, SURF + 0.16 * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 1.1],
+            scale: [sz, 0.7 * sz, sz],
+          };
+        });
+        const initC = new THREE.Color(0x4ade80);
+        for (let i = 0; i < placements.length; i++) mesh.setColorAt(i, initC);
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        const G = [0.29, 0.87, 0.50], B = [0.55, 0.45, 0.33];
+        this._plantUpdaters.push({ mesh, placements, updateFn: ({ tile }, rng) => {
+          const r  = tile.resource;
+          const sz = 0.75 + rng(5) * 0.55;
+          const sc = sz * (0.25 + r * 0.75);
+          return {
+            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 1.1, SURF + 0.16 * sc, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 1.1],
+            scale: [sc, 0.7 * sc, sc],
+            color: [G[0]*r + B[0]*(1-r), G[1]*r + B[1]*(1-r), G[2]*r + B[2]*(1-r)],
+          };
+        }});
+        this._grassFoodTiles = bushTiles;
+      }
     }
 
     // ── Trees on FOREST tiles ─────────────────────────────────────────────
-    const forestTrees = buckets[TileType.FOREST].filter(t => this._rng(t.x, t.z) < 0.82);
-    if (forestTrees.length > 0) {
-      const trunkGeom   = new THREE.CylinderGeometry(0.08, 0.11, 0.38, 5);
-      const trunkMat    = new THREE.MeshLambertMaterial({ color: 0x78350f });
-      const trunkMesh   = new THREE.InstancedMesh(trunkGeom, trunkMat, forestTrees.length);
+    {
+      const SURF        = TerrainRenderer.surfaceY(TileType.FOREST);
+      const forestTiles = buckets[TileType.FOREST].filter(t => this._rng(t.x, t.z) < 0.82);
+      if (forestTiles.length > 0) {
+        const deadTiles   = forestTiles.filter(t => this._rng(t.x, t.z, 41) < 0.10);
+        const livingTiles = forestTiles.filter(t => this._rng(t.x, t.z, 41) >= 0.10);
 
-      const foliageGeom = new THREE.ConeGeometry(0.38, 0.72, 6);
-      const foliageMat  = new THREE.MeshLambertMaterial({ color: 0x15803d });
-      const foliageMesh = new THREE.InstancedMesh(foliageGeom, foliageMat, forestTrees.length);
+        // Sort living tiles into 6 biome-clustered types
+        const typeBuckets = { pine: [], spruce: [], oak: [], birch: [], cherry: [], maple: [] };
+        for (const t of livingTiles) {
+          const sel = Math.max(0, Math.min(1,
+            0.80 * (this._forestBiomeNoise(t.x, t.z) + 1) * 0.5 + 0.20 * this._rng(t.x, t.z, 40)));
+          const key = sel < 0.17 ? 'pine' : sel < 0.34 ? 'spruce' : sel < 0.50 ? 'oak'
+                    : sel < 0.67 ? 'birch' : sel < 0.83 ? 'cherry' : 'maple';
+          typeBuckets[key].push(t);
+        }
 
-      const surfY = TerrainRenderer.surfaceY(TileType.FOREST);
+        // Data-driven tree type definitions
+        const TREE_TYPES = [
+          { tiles: typeBuckets.pine,
+            trunk: { color: 0x5c3d1a, radT: 0.055, radB: 0.095, h0: 0.90, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
+            fol:   { geom: new THREE.ConeGeometry(0.28, 0.90, 6),   color: 0x15803d, h0: 0.85, hVar: 0.40, sx0: 0.75, sxVar: 0.35, centerFrac: 0.45, roundCrown: false },
+            lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
+          { tiles: typeBuckets.spruce,
+            trunk: { color: 0x3d2810, radT: 0.050, radB: 0.088, h0: 1.05, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
+            fol:   { geom: new THREE.ConeGeometry(0.22, 1.05, 7),   color: 0x0d5e28, h0: 0.90, hVar: 0.45, sx0: 0.62, sxVar: 0.28, centerFrac: 0.50, roundCrown: false },
+            lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
+          { tiles: typeBuckets.oak,
+            trunk: { color: 0x78350f, radT: 0.075, radB: 0.12,  h0: 0.65, hVar: 0.45, hScale: 0.85, topFrac: 0.75 },
+            fol:   { geom: new THREE.SphereGeometry(0.38, 7, 5), color: 0x166534, h0: 0.65, hVar: 0.45, sx0: 0.85, sxVar: 0.70, centerFrac: 0.36, roundCrown: true  },
+            lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
+          { tiles: typeBuckets.birch,
+            trunk: { color: 0xc8c0b0, radT: 0.038, radB: 0.060, h0: 0.78, hVar: 0.40, hScale: 0.88, topFrac: 0.70 },
+            fol:   { geom: new THREE.SphereGeometry(0.30, 6, 5), color: 0x8ab548, h0: 0.52, hVar: 0.38, sx0: 0.68, sxVar: 0.52, centerFrac: 0.33, roundCrown: true  },
+            lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
+          { tiles: typeBuckets.cherry,
+            trunk: { color: 0x9c7b6e, radT: 0.050, radB: 0.080, h0: 0.70, hVar: 0.40, hScale: 0.90, topFrac: 0.78 },
+            fol:   { geom: new THREE.SphereGeometry(0.40, 7, 5), color: 0xf9a8d4, h0: 0.60, hVar: 0.50, sx0: 0.90, sxVar: 0.65, centerFrac: 0.38, roundCrown: true  },
+            lush: [0.98, 0.66, 0.83], sparse: [0.90, 0.80, 0.85] },
+          { tiles: typeBuckets.maple,
+            trunk: { color: 0x6b3d12, radT: 0.080, radB: 0.125, h0: 0.70, hVar: 0.45, hScale: 0.85, topFrac: 0.75 },
+            fol:   { geom: new THREE.SphereGeometry(0.44, 7, 5), color: 0xdc6b2f, h0: 0.70, hVar: 0.45, sx0: 0.95, sxVar: 0.65, centerFrac: 0.38, roundCrown: true  },
+            lush: [0.86, 0.42, 0.18], sparse: [0.55, 0.38, 0.22] },
+        ];
 
-      forestTrees.forEach((tile, i) => {
-        const ox = (this._rng(tile.x, tile.z, 3) - 0.5) * 0.7;
-        const oz = (this._rng(tile.x, tile.z, 4) - 0.5) * 0.7;
-        const cx = tile.x * TILE_SIZE + TILE_SIZE / 2 + ox;
-        const cz = tile.z * TILE_SIZE + TILE_SIZE / 2 + oz;
+        for (const { tiles, trunk, fol, lush, sparse } of TREE_TYPES) {
+          if (tiles.length === 0) continue;
+          const placements = this._expandPlacements(tiles);
 
-        dummy.position.set(cx, surfY + 0.19, cz);
-        dummy.scale.set(1, 1, 1);
-        dummy.updateMatrix();
-        trunkMesh.setMatrixAt(i, dummy.matrix);
+          // Trunk — static, no resource update
+          this._applyTransforms(placements,
+            this._makeInstanced(new THREE.CylinderGeometry(trunk.radT, trunk.radB, 0.42, 5),
+              new THREE.MeshLambertMaterial({ color: trunk.color }), placements.length),
+            dummy, ({ tile }, rng) => {
+              const sz = 0.60 + rng(36) * 0.70, tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
+              return {
+                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 1.1, SURF + 0.21 * tH * trunk.hScale * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 1.1],
+                scale: [tW * sz, tH * trunk.hScale * sz, tW * sz],
+                rot:   [0, rng(32) * Math.PI * 2, 0],
+              };
+            });
 
-        dummy.position.set(cx, surfY + 0.70, cz);
-        dummy.updateMatrix();
-        foliageMesh.setMatrixAt(i, dummy.matrix);
-      });
+          // Foliage — resource-driven color + height
+          const fMesh = this._makeInstanced(fol.geom, new THREE.MeshLambertMaterial({ color: fol.color }), placements.length);
+          const initC = new THREE.Color(fol.color);
+          for (let i = 0; i < placements.length; i++) fMesh.setColorAt(i, initC);
+          if (fMesh.instanceColor) fMesh.instanceColor.needsUpdate = true;
 
-      trunkMesh.castShadow = true;
-      foliageMesh.castShadow = true;
-      foliageMesh.receiveShadow = true;
-      trunkMesh.instanceMatrix.needsUpdate = true;
-      foliageMesh.instanceMatrix.needsUpdate = true;
-      this.scene.add(trunkMesh);
-      this.scene.add(foliageMesh);
-      this._meshes.push(trunkMesh, foliageMesh);
+          const foliageXform = ({ tile }, rng, resource) => {
+            const sz   = 0.60 + rng(36) * 0.70;
+            const tH   = trunk.h0 + rng(30) * trunk.hVar;
+            const tTop = SURF + 0.42 * tH * trunk.hScale * trunk.topFrac * sz;
+            const rsc  = 0.5 + resource * 0.5;
+            const fH   = (fol.h0 + rng(35) * fol.hVar) * rsc * sz;
+            const fSx  = (fol.sx0 + rng(33) * fol.sxVar) * sz;
+            const fSz  = fol.roundCrown ? (fol.sx0 + rng(34) * fol.sxVar) * sz : fSx;
+            return {
+              pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 1.1, tTop + fol.centerFrac * fH, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 1.1],
+              scale: [fSx, fH, fSz],
+              rot:   [0, rng(32) * Math.PI * 2, 0],
+            };
+          };
+          this._applyTransforms(placements, fMesh, dummy, (p, rng) => foliageXform(p, rng, 1));
+          this._plantUpdaters.push({ mesh: fMesh, placements, updateFn: ({ tile }, rng) => {
+            const r = tile.resource;
+            return { ...foliageXform({ tile }, rng, r),
+              color: [lush[0]*r + sparse[0]*(1-r), lush[1]*r + sparse[1]*(1-r), lush[2]*r + sparse[2]*(1-r)] };
+          }});
+        }
+
+        // Dead trees — static single trunk, no foliage
+        if (deadTiles.length > 0) {
+          this._applyTransforms(
+            deadTiles.map(tile => ({ tile, sub: 0 })),
+            this._makeInstanced(new THREE.CylinderGeometry(0.04, 0.08, 0.38, 4),
+              new THREE.MeshLambertMaterial({ color: 0x4a3520 }), deadTiles.length),
+            dummy, ({ tile }, rng) => {
+              const sz = 0.60 + rng(36) * 0.70;
+              return {
+                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 0.7, SURF + 0.19 * (0.55 + rng(30) * 0.55) * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 0.7],
+                scale: [(0.6 + rng(31) * 0.5) * sz, (0.55 + rng(30) * 0.55) * sz, (0.6 + rng(31) * 0.5) * sz],
+                rot:   [0, rng(32) * Math.PI * 2, 0],
+              };
+            });
+        }
+        this._forestFoodTiles = forestTiles;
+      }
     }
 
     // ── Rocks on STONE tiles ──────────────────────────────────────────────
@@ -230,6 +359,124 @@ export class TerrainRenderer {
       rockMesh.instanceMatrix.needsUpdate = true;
       this.scene.add(rockMesh);
       this._meshes.push(rockMesh);
+    }
+
+    // ── Cacti on DESERT tiles (saguaro-style: trunk + elbow arms) ────────────
+    const desertTiles = buckets[TileType.DESERT].filter(t => this._rng(t.x, t.z, 70) < 0.30);
+    if (desertTiles.length > 0) {
+      const cactusMat   = new THREE.MeshLambertMaterial({ color: 0x4a7c35 });
+      const desertSurfY = TerrainRenderer.surfaceY(TileType.DESERT);
+      // Two-segment arm: a short outward piece then a taller upward piece
+      const ARM_OUT_TILT = Math.PI * 0.44; // ~79° from vertical — nearly horizontal
+      const ARM_UP_TILT  = Math.PI * 0.05; // ~9° from vertical  — nearly straight up
+      const ARM_OUT_LEN  = 0.18;
+      const ARM_UP_LEN   = 0.26;
+
+      // Expand desert tiles to placements first (1-2 cacti per tile)
+      const cactPlacements = [];
+      for (const tile of desertTiles) {
+        const count = this._rng(tile.x, tile.z, 50) < 0.60 ? 1 : 2;
+        for (let sub = 0; sub < count; sub++) cactPlacements.push({ tile, sub });
+      }
+
+      // Trunk sized to total placements
+      const trunkGeom    = new THREE.CylinderGeometry(0.058, 0.095, 0.55, 7);
+      const trunkMesh    = new THREE.InstancedMesh(trunkGeom, cactusMat, cactPlacements.length);
+
+      // Arm subsets — each placement gets its own arm probability via sub-shifted seed
+      const armLPlacements = cactPlacements.filter(p => this._rng(p.tile.x, p.tile.z, 74 + p.sub * 13) < 0.65);
+      const armRPlacements = cactPlacements.filter(p => this._rng(p.tile.x, p.tile.z, 76 + p.sub * 13) < 0.55);
+      const armOutGeom   = new THREE.CylinderGeometry(0.036, 0.046, ARM_OUT_LEN, 6);
+      const armUpGeom    = new THREE.CylinderGeometry(0.030, 0.038, ARM_UP_LEN,  6);
+      const armLOutMesh  = armLPlacements.length > 0 ? new THREE.InstancedMesh(armOutGeom, cactusMat, armLPlacements.length) : null;
+      const armLUpMesh   = armLPlacements.length > 0 ? new THREE.InstancedMesh(armUpGeom,  cactusMat, armLPlacements.length) : null;
+      const armROutMesh  = armRPlacements.length > 0 ? new THREE.InstancedMesh(armOutGeom, cactusMat, armRPlacements.length) : null;
+      const armRUpMesh   = armRPlacements.length > 0 ? new THREE.InstancedMesh(armUpGeom,  cactusMat, armRPlacements.length) : null;
+
+      cactPlacements.forEach(({ tile, sub }, i) => {
+        const s  = sub * 13;
+        const ox = (this._rng(tile.x, tile.z, 71 + s) - 0.5) * 1.0;
+        const oz = (this._rng(tile.x, tile.z, 72 + s) - 0.5) * 1.0;
+        const h  = 0.7 + this._rng(tile.x, tile.z, 73 + s) * 0.7;
+        dummy.position.set(
+          tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
+          desertSurfY + 0.275 * h,
+          tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+        );
+        dummy.scale.set(1, h, 1);
+        dummy.rotation.set(0, 0, 0);
+        dummy.updateMatrix();
+        trunkMesh.setMatrixAt(i, dummy.matrix);
+      });
+
+      // Helper: position a two-segment elbow arm (outward + upward)
+      const setArm = (outMesh, upMesh, placement, idx, attachSeed, tiltSign) => {
+        const { tile, sub } = placement;
+        const s  = sub * 13;
+        const ox = (this._rng(tile.x, tile.z, 71 + s) - 0.5) * 1.0;
+        const oz = (this._rng(tile.x, tile.z, 72 + s) - 0.5) * 1.0;
+        const h  = 0.7 + this._rng(tile.x, tile.z, 73 + s) * 0.7;
+        const cx = tile.x * TILE_SIZE + TILE_SIZE / 2 + ox;
+        const cz = tile.z * TILE_SIZE + TILE_SIZE / 2 + oz;
+        const attachFrac = 0.50 + this._rng(tile.x, tile.z, attachSeed + s) * 0.25;
+        const attachH    = desertSurfY + 0.55 * h * attachFrac;
+
+        const outCX = cx + tiltSign * Math.sin(ARM_OUT_TILT) * ARM_OUT_LEN * 0.5;
+        const outCY = attachH + Math.cos(ARM_OUT_TILT) * ARM_OUT_LEN * 0.5;
+        dummy.position.set(outCX, outCY, cz);
+        dummy.scale.set(1, 1, 1);
+        dummy.rotation.set(0, 0, tiltSign * ARM_OUT_TILT);
+        dummy.updateMatrix();
+        outMesh.setMatrixAt(idx, dummy.matrix);
+
+        const elbowX = cx + tiltSign * Math.sin(ARM_OUT_TILT) * ARM_OUT_LEN;
+        const elbowY = attachH + Math.cos(ARM_OUT_TILT) * ARM_OUT_LEN;
+        const upCX   = elbowX + tiltSign * Math.sin(ARM_UP_TILT) * ARM_UP_LEN * 0.5;
+        const upCY   = elbowY + Math.cos(ARM_UP_TILT) * ARM_UP_LEN * 0.5;
+        dummy.position.set(upCX, upCY, cz);
+        dummy.scale.set(1, 1, 1);
+        dummy.rotation.set(0, 0, tiltSign * ARM_UP_TILT);
+        dummy.updateMatrix();
+        upMesh.setMatrixAt(idx, dummy.matrix);
+      };
+
+      armLPlacements.forEach((p, i) => setArm(armLOutMesh, armLUpMesh, p, i, 78, -1));
+      armRPlacements.forEach((p, i) => setArm(armROutMesh, armRUpMesh, p, i, 79, +1));
+
+      [trunkMesh, armLOutMesh, armLUpMesh, armROutMesh, armRUpMesh].forEach(m => {
+        if (!m) return;
+        m.castShadow = true; m.receiveShadow = true;
+        m.instanceMatrix.needsUpdate = true;
+        this.scene.add(m); this._meshes.push(m);
+      });
+    }
+
+    // ── Shells on BEACH tiles ────────────────────────────────────────────
+    const beachShellTiles = buckets[TileType.BEACH].filter(t => this._rng(t.x, t.z, 75) < 0.35);
+    if (beachShellTiles.length > 0) {
+      const shellGeom = new THREE.SphereGeometry(0.06, 4, 3);
+      const shellMat  = new THREE.MeshLambertMaterial({ color: 0xf5e6d0 });
+      const shellMesh = new THREE.InstancedMesh(shellGeom, shellMat, beachShellTiles.length);
+      const beachSurfY = TerrainRenderer.surfaceY(TileType.BEACH);
+
+      beachShellTiles.forEach((tile, i) => {
+        const ox = (this._rng(tile.x, tile.z, 76) - 0.5) * 0.9;
+        const oz = (this._rng(tile.x, tile.z, 77) - 0.5) * 0.9;
+        dummy.position.set(
+          tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
+          beachSurfY + 0.03,
+          tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+        );
+        dummy.scale.set(1.2, 0.4, 1);
+        dummy.rotation.y = this._rng(tile.x, tile.z, 78) * Math.PI * 2;
+        dummy.updateMatrix();
+        shellMesh.setMatrixAt(i, dummy.matrix);
+      });
+
+      shellMesh.receiveShadow = true;
+      shellMesh.instanceMatrix.needsUpdate = true;
+      this.scene.add(shellMesh);
+      this._meshes.push(shellMesh);
     }
 
     // ── Snow caps on MOUNTAIN tiles ───────────────────────────────────────
@@ -415,6 +662,10 @@ export class TerrainRenderer {
       const sheepTailGeom = new THREE.SphereGeometry(0.065, 4, 3);
       const sheepTailMat  = new THREE.MeshLambertMaterial({ color: 0xffffff });
       const sheepTailMesh = new THREE.InstancedMesh(sheepTailGeom, sheepTailMat, sheepTiles.length);
+      const sheepEyeGeom  = new THREE.SphereGeometry(0.025, 5, 4);
+      const sheepEyeMat   = new THREE.MeshLambertMaterial({ color: 0x111122 });
+      const sheepEyeLMesh = new THREE.InstancedMesh(sheepEyeGeom, sheepEyeMat, sheepTiles.length);
+      const sheepEyeRMesh = new THREE.InstancedMesh(sheepEyeGeom, sheepEyeMat, sheepTiles.length);
       const instances = sheepTiles.map((tile) => {
         const ox = (this._rng(tile.x, tile.z, 31) - 0.5) * 0.9;
         const oz = (this._rng(tile.x, tile.z, 32) - 0.5) * 0.9;
@@ -435,6 +686,8 @@ export class TerrainRenderer {
       addAnimated(sheepMesh, instances, mobileGrazeConfig, [
         { mesh: sheepHeadMesh, offset: 0.28 },
         { mesh: sheepTailMesh, offset: -0.24, tail: true },
+        { mesh: sheepEyeLMesh, eyeL: true, fwd: 0.33, spread: 0.08, yOffset: 0.09 },
+        { mesh: sheepEyeRMesh, eyeR: true, fwd: 0.33, spread: 0.08, yOffset: 0.09 },
       ]);
     }
 
@@ -458,6 +711,10 @@ export class TerrainRenderer {
       const pigTailGeom  = new THREE.TorusGeometry(0.04, 0.018, 4, 6, Math.PI * 1.5);
       const pigTailMat   = new THREE.MeshLambertMaterial({ color: 0xdd9a85 });
       const pigTailMesh  = new THREE.InstancedMesh(pigTailGeom, pigTailMat, pigTiles.length);
+      const pigEyeGeom   = new THREE.SphereGeometry(0.022, 5, 4);
+      const pigEyeMat    = new THREE.MeshLambertMaterial({ color: 0x111122 });
+      const pigEyeLMesh  = new THREE.InstancedMesh(pigEyeGeom, pigEyeMat, pigTiles.length);
+      const pigEyeRMesh  = new THREE.InstancedMesh(pigEyeGeom, pigEyeMat, pigTiles.length);
       const instances = pigTiles.map((tile) => {
         const ox = (this._rng(tile.x, tile.z, 41) - 0.5) * 0.95;
         const oz = (this._rng(tile.x, tile.z, 42) - 0.5) * 0.95;
@@ -483,6 +740,58 @@ export class TerrainRenderer {
         { mesh: pigSnoutMesh, offset: 0.36, snout: true, useSnoutScale: true },
         { mesh: pigEarMesh,  offset: 0.2,  ears: true, yOffset: 0.06 },
         { mesh: pigTailMesh, offset: -0.22, tail: true },
+        { mesh: pigEyeLMesh, eyeL: true, fwd: 0.28, spread: 0.07, yOffset: 0.11 },
+        { mesh: pigEyeRMesh, eyeR: true, fwd: 0.28, spread: 0.07, yOffset: 0.11 },
+      ]);
+    }
+
+    // ── Crabs on BEACH tiles ─────────────────────────────────────────────
+    const beachTiles = buckets[TileType.BEACH] ?? [];
+    const crabTiles = beachTiles.filter(t => this._rng(t.x, t.z, 60) < 0.18);
+    const crabConfig = {
+      label: 'Crab', icon: '🦀',
+      description: 'A small crab scuttling across the sand.',
+      driftRadius: 0.06, driftSpeed: 2.5, bobAmount: 0.005, bobSpeed: 3,
+      mobile: true, moveSpeed: 0.35, tileType: TileType.BEACH, wanderRadius: 3,
+    };
+    if (crabTiles.length > 0) {
+      // Body: wide flat oval shell
+      const crabBodyGeom = new THREE.SphereGeometry(0.090, 8, 5);
+      const crabBodyMat  = new THREE.MeshLambertMaterial({ color: 0xc0421f });
+      const crabMesh     = new THREE.InstancedMesh(crabBodyGeom, crabBodyMat, crabTiles.length);
+      // Claws: tapered cylinders that extend sideways
+      const clawGeom  = new THREE.CylinderGeometry(0.016, 0.032, 0.13, 4);
+      const clawMat   = new THREE.MeshLambertMaterial({ color: 0xd44e28 });
+      const clawLMesh = new THREE.InstancedMesh(clawGeom, clawMat, crabTiles.length);
+      const clawRMesh = new THREE.InstancedMesh(clawGeom, clawMat, crabTiles.length);
+      // Eyes: two tiny spheres on top
+      const eyeGeom  = new THREE.SphereGeometry(0.018, 4, 3);
+      const eyeMat   = new THREE.MeshLambertMaterial({ color: 0x1a0a00 });
+      const eyeLMesh = new THREE.InstancedMesh(eyeGeom, eyeMat, crabTiles.length);
+      const eyeRMesh = new THREE.InstancedMesh(eyeGeom, eyeMat, crabTiles.length);
+
+      const crabSurfY = surfY(TileType.BEACH);
+      const instances = crabTiles.map((tile) => {
+        const ox   = (this._rng(tile.x, tile.z, 61) - 0.5) * 0.9;
+        const oz   = (this._rng(tile.x, tile.z, 62) - 0.5) * 0.9;
+        const seed = this._rng(tile.x, tile.z, 63) * Math.PI * 2;
+        const tx   = tile.x + 0.5 + ox * 0.5;
+        const tz   = tile.z + 0.5 + oz * 0.5;
+        return {
+          x: tx, z: tz, targetX: tx, targetZ: tz,
+          homeX: tile.x, homeZ: tile.z,
+          baseY: crabSurfY + 0.05,
+          scale:     [1.5, 0.32, 1.10],
+          headScale: [1, 1, 1],
+          rotY: seed, seed,
+        };
+      });
+      crabMesh.castShadow = true;
+      addAnimated(crabMesh, instances, crabConfig, [
+        { mesh: clawLMesh, clawL: true },
+        { mesh: clawRMesh, clawR: true },
+        { mesh: eyeLMesh, eyeL: true },
+        { mesh: eyeRMesh, eyeR: true },
       ]);
     }
 
@@ -620,22 +929,49 @@ export class TerrainRenderer {
     // ── Single Whale in DEEP_WATER ──────────────────────────────────────────
     const whaleDeepTiles = buckets[TileType.DEEP_WATER] ?? [];
     if (whaleDeepTiles.length > 0) {
-      const wIdx = Math.floor(whaleDeepTiles.length * 0.5) % whaleDeepTiles.length;
+      const wIdx  = Math.floor(whaleDeepTiles.length * 0.5) % whaleDeepTiles.length;
       const wTile = whaleDeepTiles[wIdx];
 
-      // Whale body: elongated sphere
-      const whaleBodyGeom = new THREE.SphereGeometry(0.30, 7, 5);
-      const whaleBodyMat  = new THREE.MeshLambertMaterial({ color: 0x1a3050 });
-      const whaleMesh     = new THREE.InstancedMesh(whaleBodyGeom, whaleBodyMat, 1);
+      const whaleMat     = new THREE.MeshLambertMaterial({ color: 0x1e3a5f });
+      const whaleDarkMat = new THREE.MeshLambertMaterial({ color: 0x122030 });
+      const whaleBellyMat= new THREE.MeshLambertMaterial({ color: 0x4a6080 });
 
-      // Tail fluke: two small flat boxes angled like a V
-      const flukeGeom = new THREE.BoxGeometry(0.28, 0.06, 0.12);
-      const flukeMat  = new THREE.MeshLambertMaterial({ color: 0x152840 });
-      const flukeL    = new THREE.InstancedMesh(flukeGeom, flukeMat, 1);
-      const flukeR    = new THREE.InstancedMesh(flukeGeom, flukeMat, 1);
+      // Body: elongated sphere — wide at head, tapers to tail
+      const whaleBodyGeom = new THREE.SphereGeometry(0.30, 10, 7);
+      const whaleMesh     = new THREE.InstancedMesh(whaleBodyGeom, whaleMat, 1);
 
-      const ox = (this._rng(wTile.x, wTile.z, 91) - 0.5) * 0.5;
-      const oz = (this._rng(wTile.x, wTile.z, 92) - 0.5) * 0.5;
+      // Belly patch: slightly lighter flattened sphere on the underside
+      const bellyGeom  = new THREE.SphereGeometry(0.22, 8, 5);
+      const bellyMesh  = new THREE.InstancedMesh(bellyGeom, whaleBellyMat, 1);
+
+      // Dorsal fin: upward-pointing cone, sits behind midpoint
+      const dorsalGeom  = new THREE.ConeGeometry(0.06, 0.28, 5);
+      const dorsalMesh  = new THREE.InstancedMesh(dorsalGeom, whaleDarkMat, 1);
+
+      // Pectoral fins: long flat shapes on each side
+      const pectGeom  = new THREE.BoxGeometry(0.32, 0.04, 0.10);
+      const pectLMesh = new THREE.InstancedMesh(pectGeom, whaleMat, 1);
+      const pectRMesh = new THREE.InstancedMesh(pectGeom, whaleMat, 1);
+
+      // Tail flukes: flat horizontal lobes
+      const flukeGeom  = new THREE.BoxGeometry(0.30, 0.04, 0.14);
+      const flukeLMesh = new THREE.InstancedMesh(flukeGeom, whaleDarkMat, 1);
+      const flukeRMesh = new THREE.InstancedMesh(flukeGeom, whaleDarkMat, 1);
+
+      // Blowhole spray: particle Points system
+      const SPRAY_COUNT  = 28;
+      const sprayPtsGeom = new THREE.BufferGeometry();
+      const sprayPosArr  = new Float32Array(SPRAY_COUNT * 3);
+      sprayPtsGeom.setAttribute('position', new THREE.BufferAttribute(sprayPosArr, 3));
+      const sprayPtsMat  = new THREE.PointsMaterial({
+        color: 0xd8f4ff, size: 0.09, transparent: true, opacity: 0.0, sizeAttenuation: true,
+      });
+      const sprayPoints  = new THREE.Points(sprayPtsGeom, sprayPtsMat);
+      this.scene.add(sprayPoints);
+      this._meshes.push(sprayPoints);
+
+      const ox    = (this._rng(wTile.x, wTile.z, 91) - 0.5) * 0.5;
+      const oz    = (this._rng(wTile.x, wTile.z, 92) - 0.5) * 0.5;
       const wSeed = this._rng(wTile.x, wTile.z, 93) * Math.PI * 2;
       const wx = wTile.x + 0.5 + ox;
       const wz = wTile.z + 0.5 + oz;
@@ -643,20 +979,25 @@ export class TerrainRenderer {
       const whaleInstances = [{
         x: wx, z: wz, targetX: wx, targetZ: wz,
         homeX: wTile.x, homeZ: wTile.z,
-        baseY: surfY(TileType.DEEP_WATER) + 0.02,
-        scale: [2.2, 0.65, 0.80],
+        baseY: surfY(TileType.DEEP_WATER) + 0.05,
+        scale: [0.72, 0.50, 2.40],  // narrow width, flat height, long in facing direction (Z)
         rotY: wSeed, seed: wSeed,
       }];
       const whaleConfig = {
         label: 'Whale', icon: '🐋',
         description: 'A great whale, sole sovereign of the deep — ancient and unhurried.',
-        driftRadius: 0.05, driftSpeed: 0.08, bobAmount: 0.04, bobSpeed: 0.6,
+        driftRadius: 0.04, driftSpeed: 0.07, bobAmount: 0.05, bobSpeed: 0.5,
         mobile: true, moveSpeed: 0.08, tileTypes: [TileType.DEEP_WATER], wanderRadius: 12,
       };
+      whaleConfig.spray = { points: sprayPoints, geom: sprayPtsGeom, mat: sprayPtsMat, count: SPRAY_COUNT };
       whaleMesh.castShadow = true;
       addAnimated(whaleMesh, whaleInstances, whaleConfig, [
-        { mesh: flukeL, offset: -0.58, tail: true },
-        { mesh: flukeR, offset: -0.58, tail: true },
+        { mesh: bellyMesh,  offset:  0.0,  yOffset: -0.12 },  // belly below centre
+        { mesh: dorsalMesh, dorsalFin: true },
+        { mesh: pectLMesh,  pectL: true },
+        { mesh: pectRMesh,  pectR: true },
+        { mesh: flukeLMesh, flukeL: true },
+        { mesh: flukeRMesh, flukeR: true },
       ]);
     }
   }
@@ -703,9 +1044,19 @@ export class TerrainRenderer {
             }
           } else if (dist > 0.01) {
             const move = Math.min(moveSpeed * realDelta, dist);
-            inst.x += (dx / dist) * move;
-            inst.z += (dz / dist) * move;
-            inst.rotY = Math.atan2(inst.targetX - inst.x, inst.targetZ - inst.z);
+            const newX = inst.x + (dx / dist) * move;
+            const newZ = inst.z + (dz / dist) * move;
+            // Prevent walking onto invalid tile types (e.g. land animals entering water)
+            const newTile = this.world.getTile(Math.round(newX), Math.round(newZ));
+            if (!newTile || !types.includes(newTile.type)) {
+              // Blocked — return to home position
+              inst.targetX = (inst.homeX ?? Math.round(inst.x)) + 0.5;
+              inst.targetZ = (inst.homeZ ?? Math.round(inst.z)) + 0.5;
+            } else {
+              inst.x = newX;
+              inst.z = newZ;
+              inst.rotY = Math.atan2(inst.targetX - inst.x, inst.targetZ - inst.z);
+            }
           }
         }
 
@@ -722,6 +1073,14 @@ export class TerrainRenderer {
           inst._sparkleX = px; inst._sparkleY = py; inst._sparkleZ = pz;
         }
         const ry = inst.rotY;
+        // Store blowhole position for spray particles
+        if (config.spray && i === 0) {
+          const noseReach = inst.scale[2] * 0.30 - 0.06;
+          inst._blowholeX = px + Math.sin(ry) * noseReach;
+          inst._blowholeY = py + inst.scale[1] * 0.44;
+          inst._blowholeZ = pz + Math.cos(ry) * noseReach;
+          inst._blowholeRY = ry;
+        }
 
         dummy.position.set(px, py, pz);
         dummy.scale.set(inst.scale[0], inst.scale[1], inst.scale[2]);
@@ -778,6 +1137,83 @@ export class TerrainRenderer {
             dummy.rotation.x = 0.3;
             dummy.updateMatrix();
             part.mesh.setMatrixAt(i, dummy.matrix);
+          } else if (part.dorsalFin) {
+            // Whale/dolphin dorsal fin: upward-pointing cone behind the midpoint
+            const dorsalBack = inst.scale[2] * 0.30 * 0.40; // 40% of body half-length back
+            const dorsalX = px - Math.sin(ry) * dorsalBack;
+            const dorsalZ = pz - Math.cos(ry) * dorsalBack;
+            dummy.position.set(dorsalX, py + inst.scale[1] * 0.40, dorsalZ);
+            dummy.scale.set(1, 1, 1);
+            dummy.rotation.order = 'YXZ';
+            dummy.rotation.set(0, ry, 0);
+            dummy.updateMatrix();
+            part.mesh.setMatrixAt(i, dummy.matrix);
+          } else if (part.flukeL || part.flukeR) {
+            // Whale tail flukes: flat horizontal lobes at the tail end
+            const side     = part.flukeR ? 1 : -1;
+            const bob      = Math.sin(t * 0.55 + inst.seed) * 0.06;
+            const tailReach = inst.scale[2] * 0.30 + 0.12; // body half-length + small overhang
+            const tailX = px - Math.sin(ry) * tailReach;
+            const tailZ = pz - Math.cos(ry) * tailReach;
+            const perpX = Math.cos(ry) * side * 0.16;
+            const perpZ = -Math.sin(ry) * side * 0.16;
+            dummy.position.set(tailX + perpX, py - 0.04 + bob, tailZ + perpZ);
+            dummy.scale.set(1, 1, 1);
+            dummy.rotation.order = 'YXZ';
+            dummy.rotation.y = ry + side * 0.22;
+            dummy.rotation.x = side * 0.12 + bob * 0.4;
+            dummy.rotation.z = 0;
+            dummy.updateMatrix();
+            part.mesh.setMatrixAt(i, dummy.matrix);
+          } else if (part.pectL || part.pectR) {
+            // Whale pectoral fins: long flat fins on the sides
+            const side  = part.pectR ? 1 : -1;
+            // Use body half-width (scale[0] * sphere radius 0.30) for correct offset
+            const bodyHalfW = inst.scale[0] * 0.30 + 0.04;
+            const perpX = Math.cos(ry) * side * bodyHalfW;
+            const perpZ = -Math.sin(ry) * side * bodyHalfW;
+            const fwdX  = Math.sin(ry) * 0.18;
+            const fwdZ  = Math.cos(ry) * 0.18;
+            dummy.position.set(px + perpX + fwdX, py - 0.10, pz + perpZ + fwdZ);
+            dummy.scale.set(1, 1, 1);
+            dummy.rotation.order = 'YXZ';
+            dummy.rotation.y = ry + side * 0.2;
+            dummy.rotation.x = side * 0.45;
+            dummy.rotation.z = 0;
+            dummy.updateMatrix();
+            part.mesh.setMatrixAt(i, dummy.matrix);
+          } else if (part.eyeL || part.eyeR) {
+            // Small eyes on the front sides of the body (or head)
+            const side   = part.eyeR ? 1 : -1;
+            const fwd    = part.fwd    ?? 0.08;
+            const spread = part.spread ?? 0.05;
+            const perpX  = Math.cos(ry) * side * spread;
+            const perpZ  = -Math.sin(ry) * side * spread;
+            const fwdX   = Math.sin(ry) * fwd;
+            const fwdZ   = Math.cos(ry) * fwd;
+            dummy.position.set(px + perpX + fwdX, py + (part.yOffset ?? 0.06), pz + perpZ + fwdZ);
+            dummy.scale.set(1, 1, 1);
+            dummy.rotation.order = 'YXZ';
+            dummy.rotation.y = ry;
+            dummy.rotation.x = 0;
+            dummy.updateMatrix();
+            part.mesh.setMatrixAt(i, dummy.matrix);
+          } else if (part.clawL || part.clawR) {
+            // Crab claw: extends sideways from body, slight wave animation
+            const side   = part.clawR ? 1 : -1;
+            const perpX  = Math.cos(ry) * side * 0.11;
+            const perpZ  = -Math.sin(ry) * side * 0.11;
+            const fwdX   = Math.sin(ry) * 0.06;
+            const fwdZ   = Math.cos(ry) * 0.06;
+            const wave   = Math.sin(t * 1.8 + inst.seed + (part.clawR ? 1.1 : 0)) * 0.18;
+            dummy.position.set(px + perpX + fwdX, py + 0.03, pz + perpZ + fwdZ);
+            dummy.scale.set(1, 1, 1);
+            dummy.rotation.order = 'YXZ';
+            dummy.rotation.y = ry + side * Math.PI * 0.5;
+            dummy.rotation.x = -0.25 + wave;
+            dummy.rotation.z = side * 0.25;
+            dummy.updateMatrix();
+            part.mesh.setMatrixAt(i, dummy.matrix);
           } else {
             const hx = px + Math.sin(ry) * part.offset;
             const hz = pz + Math.cos(ry) * part.offset;
@@ -811,6 +1247,38 @@ export class TerrainRenderer {
         config.sparkle.geometry.attributes.position.needsUpdate = true;
         config.sparkle.material.opacity = 0.45 + Math.sin(t * 3.1) * 0.35;
       }
+
+      // Whale blowhole spray particles
+      if (config.spray && instances[0]?._blowholeX !== undefined) {
+        const { geom, mat, count } = config.spray;
+        const inst = instances[0];
+        const SPRAY_PERIOD = 9.0;
+        const SPRAY_DUR    = 1.3;
+        const phase = (t * 0.7 + inst.seed * 3.0) % SPRAY_PERIOD;
+        const posArr = geom.attributes.position.array;
+        if (phase < SPRAY_DUR) {
+          const progress = phase / SPRAY_DUR;
+          mat.opacity = Math.sin(progress * Math.PI) * 0.90;
+          const bx = inst._blowholeX;
+          const by = inst._blowholeY;
+          const bz = inst._blowholeZ;
+          const ry = inst._blowholeRY;
+          for (let si = 0; si < count; si++) {
+            // Fan of particles: spread in a cone above the blowhole, staggered by index
+            const spread = ((si / count) - 0.5) * 1.2;   // ±0.6 rad sideways cone
+            const speed  = 0.05 + (si % 5) * 0.030;      // varied outward distance
+            const rise   = 0.20 + (si % 4) * 0.075;      // varied upward arc
+            const age    = (progress + si * 0.038) % 1.0; // each particle slightly offset
+            posArr[si * 3 + 0] = bx + Math.sin(ry + spread) * speed * age;
+            posArr[si * 3 + 1] = by + rise * age - 0.28 * age * age; // parabolic arc
+            posArr[si * 3 + 2] = bz + Math.cos(ry + spread) * speed * age;
+          }
+        } else {
+          mat.opacity = 0.0;
+          for (let si = 0; si < count; si++) posArr[si * 3 + 1] = -100;
+        }
+        geom.attributes.position.needsUpdate = true;
+      }
     }
   }
 
@@ -832,6 +1300,101 @@ export class TerrainRenderer {
       }
     }
     return best;
+  }
+
+  /**
+   * Update vegetation visuals based on tile resource levels.
+   * Berry bushes shrink & brown out, tree foliage thins & desaturates.
+   */
+  updateVegetation(world) {
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+
+    // ── Berry bushes on GRASS ──────────────────────────────────────────
+    if (this._bushMesh && this._bushPlacements) {
+      const surfY = TerrainRenderer.surfaceY(TileType.GRASS);
+      const GREEN = { r: 0.29, g: 0.87, b: 0.50 }; // 0x4ade80
+      const BROWN = { r: 0.55, g: 0.45, b: 0.33 }; // 0x8B7355
+
+      this._bushPlacements.forEach(({ tile, sub }, i) => {
+        const r  = tile.resource; // 0..1
+        const s  = sub * 13;
+        const sz = 0.75 + this._rng(tile.x, tile.z, 5 + s) * 0.55;
+        const scale = sz * (0.25 + r * 0.75); // shrink when depleted
+        const ox = (this._rng(tile.x, tile.z, 1 + s) - 0.5) * 1.1;
+        const oz = (this._rng(tile.x, tile.z, 2 + s) - 0.5) * 1.1;
+
+        dummy.position.set(
+          tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
+          surfY + 0.16 * scale,
+          tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+        );
+        dummy.scale.set(scale, 0.7 * scale, scale);
+        dummy.updateMatrix();
+        this._bushMesh.setMatrixAt(i, dummy.matrix);
+
+        // Lerp color: green → brown
+        color.setRGB(
+          GREEN.r * r + BROWN.r * (1 - r),
+          GREEN.g * r + BROWN.g * (1 - r),
+          GREEN.b * r + BROWN.b * (1 - r),
+        );
+        this._bushMesh.setColorAt(i, color);
+      });
+      this._bushMesh.instanceMatrix.needsUpdate = true;
+      if (this._bushMesh.instanceColor) this._bushMesh.instanceColor.needsUpdate = true;
+    }
+
+    // ── Tree foliage on FOREST ─────────────────────────────────────────
+    if (this._foliageMeshes && this._foliageMeshes.length > 0) {
+      const surfY  = TerrainRenderer.surfaceY(TileType.FOREST);
+      const LUSH   = { r: 0.08, g: 0.50, b: 0.24 };
+      const SPARSE = { r: 0.30, g: 0.40, b: 0.20 };
+      const CHERRY_LUSH   = { r: 0.98, g: 0.66, b: 0.83 };
+      const CHERRY_SPARSE = { r: 0.90, g: 0.80, b: 0.85 };
+      const MAPLE_LUSH    = { r: 0.86, g: 0.42, b: 0.18 };
+      const MAPLE_SPARSE  = { r: 0.55, g: 0.38, b: 0.22 };
+
+      for (const entry of this._foliageMeshes) {
+        const { mesh: foliageMesh, placements,
+                trunkH0, trunkHVar, trunkHScale, trunkTopFrac,
+                folH0, folHVar, folSx0, folSxVar, folCenterFrac,
+                isOak, isCherry, isMaple } = entry;
+        placements.forEach(({ tile, sub }, i) => {
+          const r             = tile.resource;
+          const resourceScaleY = 0.5 + r * 0.5;
+          const s   = sub * 13;
+          const ox  = (this._rng(tile.x, tile.z, 3 + s) - 0.5) * 1.1;
+          const oz  = (this._rng(tile.x, tile.z, 4 + s) - 0.5) * 1.1;
+          const cx  = tile.x * TILE_SIZE + TILE_SIZE / 2 + ox;
+          const cz  = tile.z * TILE_SIZE + TILE_SIZE / 2 + oz;
+          const treeSize = 0.60 + this._rng(tile.x, tile.z, 36 + s) * 0.70;
+          const tH  = trunkH0 + this._rng(tile.x, tile.z, 30 + s) * trunkHVar;
+          const rotY = this._rng(tile.x, tile.z, 32 + s) * Math.PI * 2;
+          const tTop = surfY + 0.42 * tH * trunkHScale * trunkTopFrac * treeSize;
+          const fH   = (folH0 + this._rng(tile.x, tile.z, 35 + s) * folHVar) * resourceScaleY * treeSize;
+          const fSx  = (folSx0 + this._rng(tile.x, tile.z, 33 + s) * folSxVar) * treeSize;
+          const fSz  = isOak
+            ? (folSx0 + this._rng(tile.x, tile.z, 34 + s) * folSxVar) * treeSize
+            : fSx;
+          dummy.position.set(cx, tTop + folCenterFrac * fH, cz);
+          dummy.scale.set(fSx, fH, fSz);
+          dummy.rotation.set(0, rotY, 0);
+          dummy.updateMatrix();
+          foliageMesh.setMatrixAt(i, dummy.matrix);
+          const lush   = isCherry ? CHERRY_LUSH   : isMaple ? MAPLE_LUSH   : LUSH;
+          const sparse = isCherry ? CHERRY_SPARSE : isMaple ? MAPLE_SPARSE : SPARSE;
+          color.setRGB(
+            lush.r * r + sparse.r * (1 - r),
+            lush.g * r + sparse.g * (1 - r),
+            lush.b * r + sparse.b * (1 - r),
+          );
+          foliageMesh.setColorAt(i, color);
+        });
+        foliageMesh.instanceMatrix.needsUpdate = true;
+        if (foliageMesh.instanceColor) foliageMesh.instanceColor.needsUpdate = true;
+      }
+    }
   }
 
   /** Returns the approximate top-surface Y for a given tile type */

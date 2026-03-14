@@ -1,0 +1,125 @@
+import { TileType } from './World.js';
+
+/**
+ * Stateless gathering system.
+ * Given an agent, a tile, and the item definitions, determines what items
+ * the agent gathers and depletes the tile resource accordingly.
+ */
+export class GatheringSystem {
+  /**
+   * Attempt to gather items from a tile.
+   * @param {object} agent - The gathering agent
+   * @param {object} tile - The tile being gathered from
+   * @param {object} world - The world (for adjacency checks)
+   * @param {Map<string,object>} itemDefs - Item definitions keyed by id
+   * @returns {Array<{itemId: string, quantity: number}>} items gathered
+   */
+  static gather(agent, tile, world, itemDefs) {
+    if (!tile || tile.resource <= 0.01) return [];
+
+    const results = [];
+    const tileTypeName = tile.type;
+
+    // Determine which activities are available on this tile
+    const activities = GatheringSystem._getActivities(agent, tile, world, itemDefs);
+
+    // Pick the best activity (prioritize food if hungry, else highest-yield)
+    let activity = null;
+    if (agent.needs.hunger < 0.5) {
+      // Prefer food-producing activities when hungry
+      activity = activities.find(a => a.foodItems.length > 0) ?? activities[0];
+    } else {
+      activity = activities[0];
+    }
+    if (!activity) return [];
+
+    // Gather items from this activity
+    let totalDepletion = 0;
+    for (const itemDef of activity.items) {
+      const [minYield, maxYield] = itemDef.gatherSource.baseYield;
+      let toolMult = 1.0;
+
+      // Tool multiplier from inventory
+      const tool = agent.inventory?.getBestToolFor(activity.name, itemDefs);
+      if (tool) {
+        const toolDef = itemDefs.get(tool.itemId);
+        toolMult = toolDef?.effects?.gatherMult ?? 1.0;
+      }
+
+      // Knowledge base bonus (small bonus even without tool)
+      let knowledgeMult = 1.0;
+      if (agent.knowledge.has('stone_tools')) knowledgeMult *= 1.08;
+      if (agent.knowledge.has('metal_tools')) knowledgeMult *= 1.10;
+      if (activity.name === 'fishing' && agent.knowledge.has('fishing')) knowledgeMult *= 1.05;
+      if (activity.name === 'hunting' && agent.knowledge.has('hunting')) knowledgeMult *= 1.10;
+      if (activity.name === 'foraging' && agent.knowledge.has('agriculture') && tileTypeName === TileType.GRASS) knowledgeMult *= 1.20;
+
+      // Task bonus
+      const taskGatherBonus = agent.task === 'gatherer' ? 1.05 : 1.0;
+
+      // Resource availability scales yield
+      const resourceMult = Math.max(0.2, tile.resource);
+
+      // Calculate yield
+      const rawYield = minYield + Math.random() * (maxYield - minYield);
+      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult));
+
+      if (finalYield > 0) {
+        results.push({ itemId: itemDef.id, quantity: finalYield });
+        totalDepletion += 0.10 * finalYield / (toolMult * knowledgeMult);
+      }
+    }
+
+    // Deplete tile resource
+    if (totalDepletion > 0) {
+      tile.resource = Math.max(0, tile.resource - totalDepletion);
+    }
+
+    return results;
+  }
+
+  /**
+   * Determine available activities on a tile given agent knowledge.
+   * @returns {Array<{name: string, items: object[], foodItems: object[]}>}
+   */
+  static _getActivities(agent, tile, world, itemDefs) {
+    const tileTypeName = tile.type;
+    const activities = [];
+
+    // Check adjacency cache
+    const hasAdjacentWater = world.hasAdjacentType(tile.x, tile.z, TileType.WATER) ||
+                              world.hasAdjacentType(tile.x, tile.z, TileType.DEEP_WATER);
+
+    // Build activity → items mapping from item definitions
+    const activityMap = new Map(); // activity name → item defs[]
+
+    for (const [id, def] of itemDefs) {
+      const src = def.gatherSource;
+      if (!src) continue;
+      if (!src.tileTypes.includes(tileTypeName)) continue;
+
+      // Check adjacency requirement
+      if (src.adjacentTo) {
+        if (src.adjacentTo === 'WATER' && !hasAdjacentWater) continue;
+        if (src.adjacentTo !== 'WATER' && !world.hasAdjacentType(tile.x, tile.z, src.adjacentTo)) continue;
+      }
+
+      // Check knowledge requirements
+      const hasKnowledge = (src.knowledge ?? []).every(k => agent.knowledge.has(k));
+      if (!hasKnowledge) continue;
+
+      if (!activityMap.has(src.activity)) activityMap.set(src.activity, []);
+      activityMap.get(src.activity).push(def);
+    }
+
+    for (const [name, items] of activityMap) {
+      const foodItems = items.filter(d => d.category === 'food');
+      activities.push({ name, items, foodItems });
+    }
+
+    // Sort: activities with food items first
+    activities.sort((a, b) => b.foodItems.length - a.foodItems.length);
+
+    return activities;
+  }
+}
