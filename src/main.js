@@ -6,10 +6,18 @@ import { WorldRenderer }     from './renderer/WorldRenderer.js';
 import { TerrainRenderer }   from './renderer/TerrainRenderer.js';
 import { AgentRenderer }     from './renderer/AgentRenderer.js';
 import { BuildingRenderer }  from './renderer/BuildingRenderer.js';
+import { WildHorse }         from './simulation/WildHorse.js';
+import { WildHorseRenderer } from './renderer/WildHorseRenderer.js';
+import { SheepRenderer }     from './renderer/SheepRenderer.js';
+import { HighlandCowRenderer } from './renderer/HighlandCowRenderer.js';
+import { ButterflyRenderer } from './renderer/ButterflyRenderer.js';
+import { BeeRenderer }       from './renderer/BeeRenderer.js';
+import { FlowerRenderer }    from './renderer/FlowerRenderer.js';
 import { TimeSystem }        from './systems/TimeSystem.js';
 import { WeatherSystem }     from './systems/WeatherSystem.js';
 
 const AGENT_COUNT = 12;
+const WILD_HORSE_COUNT = 4;
 
 // ── Error handling ──────────────────────────────────────────────────────────
 
@@ -67,6 +75,13 @@ async function init() {
   }
 
   let world; let conceptGraph; let terrainRenderer; let ar; let buildingRenderer; let time; let weather;
+  let horses = [];
+  let horseRenderer;
+  let butterflyRenderer;
+  let beeRenderer;
+  let sheepRenderer;
+  let highlandCowRenderer;
+  let flowerRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -78,6 +93,13 @@ async function init() {
   terrainRenderer = new TerrainRenderer(wr.scene, world);
   ar = new AgentRenderer(wr.scene, agents, world);
   buildingRenderer = new BuildingRenderer(wr.scene, world);
+  horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
+  horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
+  sheepRenderer     = new SheepRenderer(wr.scene, world);
+  highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
+  butterflyRenderer = new ButterflyRenderer(wr.scene, world);
+  beeRenderer       = new BeeRenderer(wr.scene, world);
+  flowerRenderer    = new FlowerRenderer(wr.scene, world);
 
   time = new TimeSystem();
   weather = new WeatherSystem();
@@ -167,6 +189,12 @@ async function init() {
     terrainRenderer.dispose();
     ar.dispose();
     buildingRenderer.dispose();
+    horseRenderer?.dispose();
+    sheepRenderer?.dispose();
+    highlandCowRenderer?.dispose();
+    butterflyRenderer?.dispose();
+    beeRenderer?.dispose();
+    flowerRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
@@ -179,6 +207,14 @@ async function init() {
     terrainRenderer = new TerrainRenderer(wr.scene, world);
     ar = new AgentRenderer(wr.scene, agents, world);
     buildingRenderer = new BuildingRenderer(wr.scene, world);
+    horses.length = 0;
+    world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
+    horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
+    sheepRenderer     = new SheepRenderer(wr.scene, world);
+    highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
+    butterflyRenderer = new ButterflyRenderer(wr.scene, world);
+    beeRenderer       = new BeeRenderer(wr.scene, world);
+    flowerRenderer    = new FlowerRenderer(wr.scene, world);
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -467,6 +503,7 @@ async function init() {
     [TileType.WATER]:    { icon: '🌊', name: 'Water' },
     [TileType.BEACH]:    { icon: '🏖️', name: 'Beach' },
     [TileType.GRASS]:    { icon: '🌿', name: 'Grassland' },
+    [TileType.WOODLAND]: { icon: '🌳', name: 'Woodland' },
     [TileType.DESERT]:   { icon: '🏜️', name: 'Desert' },
     [TileType.FOREST]:   { icon: '🌲', name: 'Forest' },
     [TileType.STONE]:    { icon: '🪨', name: 'Stone' },
@@ -478,6 +515,7 @@ async function init() {
     [TileType.WATER]:    'Coastal water. Shallow fish swim here. Requires Sailing to cross.',
     [TileType.BEACH]:    'Sandy shore between land and sea. Crabs scuttle along the waterline.',
     [TileType.GRASS]:    'Berries, sheep, and pigs. Good for gathering food.',
+    [TileType.WOODLAND]: 'Lightly wooded land. Herbs and mushrooms grow here. Good for foraging.',
     [TileType.DESERT]:   'Arid, sun-baked land. Little grows here — harsh but traversable.',
     [TileType.FOREST]:   'Trees and wild game. Rich in food and resources.',
     [TileType.STONE]:    'Rocks and clay. Good for stone tools and pottery.',
@@ -489,7 +527,7 @@ async function init() {
     const info = TILE_LABELS[tile.type] ?? { icon: '', name: tile?.type ?? '?' };
     const features = TILE_FEATURES[tile.type] ?? '';
     let resourceHtml = '';
-    if (tile.type === TileType.GRASS || tile.type === TileType.FOREST) {
+    if (tile.type === TileType.GRASS || tile.type === TileType.WOODLAND || tile.type === TileType.FOREST) {
       const pct = Math.round(tile.resource * 100);
       resourceHtml = `
         <div class="info-row" style="margin-top:10px">
@@ -628,6 +666,15 @@ async function init() {
       // Regenerate tile food resources (season-aware)
       world.updateResources(delta, time.season, itemDefs.size > 0 ? itemDefs : null);
 
+      // Tick world ecology systems
+      world.updateCutTrees(delta);
+      world.updateChickenNests(delta);
+      world.updateCows(delta);
+      world.updateGlaciers(delta, weather.temperature ?? 20);
+
+      // Tick wild horse simulation
+      for (const horse of horses) horse.tick(delta, world, horses);
+
       // Handle agent-lit campfires
       if (world.campfireEvents?.length) {
         for (const evt of world.campfireEvents) {
@@ -710,6 +757,13 @@ async function init() {
     terrainRenderer.updateVegetation(world);
     ar.update();
     buildingRenderer.checkAgents(agents);
+    horseRenderer?.update();
+    sheepRenderer?.update(delta > 0 ? delta : 0);
+    highlandCowRenderer?.update(delta > 0 ? delta : 0);
+    const isSunny = !weather.isRaining && !weather.isStorm;
+    butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
+    beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
+    flowerRenderer?.update(delta > 0 ? delta : 0, time.season);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     wr.render();
     updateHUD();

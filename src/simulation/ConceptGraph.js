@@ -118,6 +118,16 @@ export class ConceptGraph {
         ).length;
         if (count < cond.value) return false;
       }
+      if (cond.type === 'tile_has_resource') {
+        // Check if the current tile has the named resource field > 0
+        if (!tile[cond.value] || tile[cond.value] <= 0) return false;
+      }
+      if (cond.type === 'near_bee_hive') {
+        // Check if agent is within cond.value tiles of any bee hive
+        const hives = world?.beeHives ?? [];
+        const near = hives.some(h => Math.hypot(h.x - agent.x, h.z - agent.z) < cond.value);
+        if (!near) return false;
+      }
     }
     return true;
   }

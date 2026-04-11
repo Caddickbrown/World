@@ -16,6 +16,8 @@ export const AgentState = {
   SLEEPING:    'sleeping',
   SOCIALIZING: 'socializing',
   DISCOVERING: 'discovering',
+  FISHING:     'fishing',
+  PERFORMING:  'performing',
 };
 
 export class Agent {
@@ -49,8 +51,24 @@ export class Agent {
     this.isAdult = false; // flips true once age >= maturity threshold
 
     this.selected = false;
+    this.isDragged = false;
     this.facingX = 0;
     this.facingZ = 1;
+
+    /** WildHorse this agent is currently riding, or null */
+    this.mountedHorse = null;
+    this._rideTimer = 0;
+
+    /** Speech bubble text and timer */
+    this.speechBubble = null;
+    this.speechBubbleTimer = 0;
+
+    /** Fishing session countdown (game-sec) */
+    this.fishingTimer = 0;
+    this._fishingTrip = false;
+
+    /** Performing session countdown (game-sec) */
+    this.performTimer = 0;
 
     /** Task role (gatherer, teacher, scout, carer) — set when Organisation is discovered */
     this.task = null;
@@ -128,6 +146,9 @@ export class Agent {
     if (hasShelter) envMult = Math.max(1.0, envMult - 0.35);
     if (this.knowledge.has('clothing')) envMult = Math.max(1.0, envMult - 0.20);
     if (this.knowledge.has('housing')) envMult = Math.max(1.0, envMult - 0.20);
+    if (this.knowledge.has('tree_house')) envMult = Math.max(1.0, envMult - 0.05);
+    if (this.knowledge.has('temple'))    envMult = Math.max(1.0, envMult - 0.04);
+    if (this.knowledge.has('church'))    envMult = Math.max(1.0, envMult - 0.04);
 
     // Drain needs
     this.needs.hunger = Math.max(0, this.needs.hunger - HUNGER_DRAIN * delta);
@@ -137,6 +158,10 @@ export class Agent {
     }
     if (this.discoveryFlash > 0) this.discoveryFlash -= delta;
     if (this._fireCooldown > 0) this._fireCooldown -= delta;
+    if (this.speechBubbleTimer > 0) {
+      this.speechBubbleTimer -= delta;
+      if (this.speechBubbleTimer <= 0) this.speechBubble = null;
+    }
 
     // Inventory spoilage
     if (itemDefs && this.inventory.stacks.length > 0) {
@@ -158,7 +183,7 @@ export class Agent {
     // Fire-lighting: cold agent who knows fire will light a campfire on their tile
     if (hasFire && envMult >= 1.2 && this._fireCooldown <= 0) {
       const tile = world.getTile(Math.floor(this.x), Math.floor(this.z));
-      if (tile && (tile.type === TileType.FOREST || tile.type === TileType.GRASS)) {
+      if (tile && (tile.type === TileType.FOREST || tile.type === TileType.WOODLAND || tile.type === TileType.GRASS)) {
         this._fireCooldown = 45 + Math.random() * 30;
         // Emit a campfire event to be consumed by main.js
         if (!world.campfireEvents) world.campfireEvents = [];
@@ -172,11 +197,42 @@ export class Agent {
       if (this.knowledge.has('weaving')) sleepMult *= 1.25;
       if (this.knowledge.has('rope')) sleepMult *= 1.1;
       if (this.knowledge.has('housing')) sleepMult *= 1.15;
+      if (this.knowledge.has('tree_house')) sleepMult *= 1.06;
+      if (this.knowledge.has('temple'))    sleepMult *= 1.04;
+      if (this.knowledge.has('church'))    sleepMult *= 1.04;
       const taskRestBonus = this.task && Agent.TASKS[this.task]?.restBonus ? Agent.TASKS[this.task].restBonus : 1.0;
       sleepMult *= taskRestBonus;
       this.needs.energy = Math.min(1, this.needs.energy + ENERGY_RECOVER * delta * 1.4 * sleepMult);
       this.restTimer -= delta;
       if (this.restTimer <= 0) {
+        this.state = AgentState.WANDERING;
+        this._pickWanderTarget(world, allAgents);
+      }
+      this._trySocialise(delta, allAgents, conceptGraph);
+      return;
+    }
+
+    // ── Fishing: sit at water's edge until the catch comes in ────────────
+    if (this.state === AgentState.FISHING) {
+      this.fishingTimer -= delta;
+      if (this.fishingTimer <= 0) {
+        let yield_ = 0.5;
+        if (this.knowledge.has('stone_tools')) yield_ *= 1.2;
+        if (this.knowledge.has('metal_tools')) yield_ *= 1.25;
+        if (this.knowledge.has('cooking'))     yield_ *= 1.5;
+        if (this.knowledge.has('pottery'))     yield_ *= 1.1;
+        this.needs.hunger = Math.min(1.0, this.needs.hunger + yield_);
+        this.state = AgentState.WANDERING;
+        this._pickWanderTarget(world, allAgents);
+      }
+      this._trySocialise(delta, allAgents, conceptGraph);
+      return;
+    }
+
+    // ── Performing: play music, spreading knowledge faster ───────────
+    if (this.state === AgentState.PERFORMING) {
+      this.performTimer -= delta;
+      if (this.performTimer <= 0) {
         this.state = AgentState.WANDERING;
         this._pickWanderTarget(world, allAgents);
       }
@@ -246,7 +302,7 @@ export class Agent {
         if (this.needs.hunger < 0.6) {
           this._tryEat(itemDefs);
         }
-      } else if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST)) {
+      } else if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST || tile.type === TileType.WOODLAND)) {
         // Fallback: old direct-hunger system if itemDefs not loaded
         let toolMult  = this.knowledge.has('stone_tools') ? 1.20 : 1.0;
         if (this.knowledge.has('metal_tools')) toolMult *= 1.25;
@@ -299,7 +355,7 @@ export class Agent {
     if (envMult >= 1.3 && !this.knowledge.has('fire') && !this.knowledge.has('shelter')) {
       const cx = Math.floor(this.x);
       const cz = Math.floor(this.z);
-      const warmTile = world.findNearest(cx, cz, [TileType.FOREST], 10);
+      const warmTile = world.findNearest(cx, cz, [TileType.FOREST, TileType.WOODLAND], 10);
       if (warmTile) {
         this.state = AgentState.WANDERING;
         this.targetX = warmTile.x + 0.5;
@@ -366,7 +422,7 @@ export class Agent {
   _pickGatherTarget(world) {
     const cx = Math.floor(this.x);
     const cz = Math.floor(this.z);
-    const tile = world.findNearest(cx, cz, [TileType.GRASS, TileType.FOREST], 8);
+    const tile = world.findNearest(cx, cz, [TileType.GRASS, TileType.FOREST, TileType.WOODLAND], 8);
     if (tile) {
       this.targetX = tile.x + 0.5;
       this.targetZ = tile.z + 0.5;
