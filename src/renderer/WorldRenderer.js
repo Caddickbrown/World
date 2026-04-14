@@ -45,7 +45,7 @@ export class WorldRenderer {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.minDistance = 6;
-    this.controls.maxDistance = 90;
+    this.controls.maxDistance = 120;
     this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.update();
 
