@@ -58,6 +58,16 @@ export class WeatherSystem {
 
     // Legacy compat: expose dominant zone state as `current`
     this.current = 'CLEAR';
+
+    /**
+     * Lightning flash state. Set during a strike; consumers (renderer / main.js)
+     * should read this each frame and clear it once displayed.
+     * Format: { x: worldX, z: worldZ, timer: seconds } or null.
+     */
+    this.lightningFlash = null;
+
+    /** Internal cooldown (game-seconds) between lightning strikes during storms. */
+    this._lightningCooldown = 20 + Math.random() * 20;
   }
 
   // ── Zone helpers ─────────────────────────────────────────────────────────
@@ -99,7 +109,16 @@ export class WeatherSystem {
    * @param {number} delta  — game-seconds elapsed
    * @param {string} season — current season name
    */
-  update(delta, season) {
+  /**
+   * Update all zone timers. Call once per game tick with game-time delta.
+   * Also ticks lightning during storms.
+   * @param {number} delta  — game-seconds elapsed
+   * @param {string} season — current season name
+   * @param {object} [world] — optional World instance; when provided, lightning
+   *   strikes are evaluated against real tile types.
+   * @returns {{ struck: boolean, tile: object|null }} lightning result this tick
+   */
+  update(delta, season, world) {
     this._season = season;
     let dominant = 'CLEAR';
 
@@ -117,6 +136,58 @@ export class WeatherSystem {
     }
 
     this.current = dominant;
+
+    // Tick lightning flash timer
+    if (this.lightningFlash) {
+      this.lightningFlash.timer -= delta;
+      if (this.lightningFlash.timer <= 0) this.lightningFlash = null;
+    }
+
+    // Lightning strikes — only during STORM, ~1 per 20 seconds
+    if (this.current === 'STORM') {
+      this._lightningCooldown -= delta;
+      if (this._lightningCooldown <= 0) {
+        this._lightningCooldown = 15 + Math.random() * 25; // average ~20 s
+
+        if (world) {
+          return this._strikeWorld(world);
+        }
+      }
+    }
+
+    return { struck: false, tile: null };
+  }
+
+  /**
+   * Pick a random land tile and apply a lightning strike.
+   * FOREST → marks as dead tree (tile.deadTree = true).
+   * MOUNTAIN → no effect.
+   * Other → visual flash only.
+   * @private
+   */
+  _strikeWorld(world) {
+    // Sample a random tile from the world
+    const x = Math.floor(Math.random() * world.width);
+    const z = Math.floor(Math.random() * world.height);
+    const tile = world.getTile(x, z);
+    if (!tile) return { struck: false, tile: null };
+
+    // Set the lightning flash for renderer consumption
+    this.lightningFlash = { x, z, timer: 0.3 };
+
+    if (tile.type === 'MOUNTAIN') {
+      // No gameplay effect on mountain strikes
+      return { struck: true, tile, effect: 'none' };
+    }
+
+    if (tile.type === 'FOREST') {
+      // Mark as dead tree — renderer can visualise this
+      tile.deadTree = true;
+      return { struck: true, tile, effect: 'deadTree' };
+    }
+
+    // All other tiles: visual only
+    return { struck: true, tile, effect: 'visual' };
   }
 
   /**
@@ -174,3 +245,4 @@ export class WeatherSystem {
   get isRaining()       { return this.current === 'RAIN' || this.current === 'STORM'; }
   get isStorm()         { return this.current === 'STORM'; }
 }
+
