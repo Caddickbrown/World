@@ -31,6 +31,8 @@ export class World {
     this.cows = [];
     /** Ground items per tile (Dan's inventory system) */
     this.tileItems = new TileItems();
+    /** Active predators in the world */
+    this.predators = [];
   }
 
   /**
@@ -133,6 +135,16 @@ export class World {
         if (tile) tile.treeCut = false;
       }
     }
+  }
+
+  /** Spawn a predator at a random walkable position. */
+  spawnPredator(type = 'wolf') {
+    const spawnPoints = this.getWildHorseSpawnPoints(1);
+    if (spawnPoints.length === 0) return null;
+    // Dynamically import to avoid circular deps at module level
+    const predator = { type, x: spawnPoints[0].x, z: spawnPoints[0].z, health: 1.0, huntCooldown: 0, targetX: spawnPoints[0].x, targetZ: spawnPoints[0].z, wanderTimer: Math.random() * 3 };
+    this.predators.push(predator);
+    return predator;
   }
 
   // ── Procedural generation ─────────────────────────────────────────────
