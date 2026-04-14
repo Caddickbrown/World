@@ -9,6 +9,7 @@ import { BuildingRenderer }  from './renderer/BuildingRenderer.js';
 import { WildHorse }         from './simulation/WildHorse.js';
 import { WildHorseRenderer } from './renderer/WildHorseRenderer.js';
 import { SheepRenderer }     from './renderer/SheepRenderer.js';
+import { PigRenderer }       from './renderer/PigRenderer.js';
 import { HighlandCowRenderer } from './renderer/HighlandCowRenderer.js';
 import { ButterflyRenderer } from './renderer/ButterflyRenderer.js';
 import { BeeRenderer }       from './renderer/BeeRenderer.js';
@@ -98,6 +99,7 @@ async function init() {
   horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
   horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
   sheepRenderer     = new SheepRenderer(wr.scene, world);
+  pigRenderer     = new PigRenderer(wr.scene, world);
   highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
   butterflyRenderer = new ButterflyRenderer(wr.scene, world);
   beeRenderer       = new BeeRenderer(wr.scene, world);
