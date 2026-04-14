@@ -32,6 +32,8 @@ export class SheepRenderer {
       { geom: new THREE.SphereGeometry(0.155, 7, 5), x: -0.09,  y: 0.22, z:  0.12 },
       { geom: new THREE.SphereGeometry(0.155, 7, 5), x:  0.09,  y: 0.22, z:  0.12 },
       { geom: new THREE.SphereGeometry(0.14, 7, 5),  x:  0,     y: 0.13, z: -0.17 },
+      { geom: new THREE.SphereGeometry(0.16, 7, 5),  x: -0.13,  y: 0.30, z:  0.05 },
+      { geom: new THREE.SphereGeometry(0.16, 7, 5),  x:  0.13,  y: 0.30, z:  0.05 },
     ];
     const headGeom = new THREE.SphereGeometry(0.10, 8, 6);
     const eyeGeom  = new THREE.SphereGeometry(0.028, 5, 4);
