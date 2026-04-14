@@ -106,7 +106,7 @@ export class World {
         cow.productionTimer = 45;
         const tx = Math.floor(cow.x);
         const tz = Math.floor(cow.z);
-        this.tileItems.addItem(tx, tz, 'milk', 1);
+        this.tileItems.add(tx, tz, 'milk', 1);
       }
     }
 
