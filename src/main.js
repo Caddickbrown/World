@@ -18,6 +18,13 @@ import { TimeSystem }        from './systems/TimeSystem.js';
 import { WeatherSystem }     from './systems/WeatherSystem.js';
 import { MinimapRenderer }   from './renderer/MinimapRenderer.js';
 import { HistoryLog }        from './systems/HistoryLog.js';
+import { DisasterSystem }    from './systems/DisasterSystem.js';
+import { TradingSystem }     from './systems/TradingSystem.js';
+import { ConflictSystem }    from './systems/ConflictSystem.js';
+import { Achievements }      from './systems/Achievements.js';
+import { LineageTracker }    from './systems/LineageTracker.js';
+import { CraftingSystem }    from './systems/CraftingSystem.js';
+import { SettlementSystem }  from './systems/SettlementSystem.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -91,6 +98,7 @@ async function init() {
   let lightningCooldown = 0;
   conceptGraph = new ConceptGraph(conceptsData);
   const agents = world.getSpawnPoints(AGENT_COUNT).map(p => new Agent(p.x, p.z));
+  agents.forEach(a => ConflictSystem.assignFaction(a));
 
   const wr = new WorldRenderer(canvas);
   terrainRenderer = new TerrainRenderer(wr.scene, world);
@@ -107,6 +115,12 @@ async function init() {
 
   time = new TimeSystem();
   weather = new WeatherSystem();
+
+  // ── Simulation systems ─────────────────────────────────────────────────
+  const disasterSystem   = new DisasterSystem();
+  const achievements     = new Achievements();
+  const lineageTracker   = new LineageTracker();
+  const settlementSystem = new SettlementSystem();
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -215,6 +229,7 @@ async function init() {
     agents.length = 0;
     const startPop = Number(popSlider.value);
     world.getSpawnPoints(startPop).forEach(p => agents.push(new Agent(p.x, p.z)));
+    agents.forEach(a => ConflictSystem.assignFaction(a));
 
     terrainRenderer = new TerrainRenderer(wr.scene, world);
     ar = new AgentRenderer(wr.scene, agents, world);
@@ -287,6 +302,7 @@ async function init() {
         agents.length = 0;
         const startPop = Number(popSlider.value);
         world.getSpawnPoints(startPop).forEach(p => agents.push(new Agent(p.x, p.z)));
+        agents.forEach(a => ConflictSystem.assignFaction(a));
 
         terrainRenderer = new TerrainRenderer(wr.scene, world);
         ar = new AgentRenderer(wr.scene, agents, world);
@@ -370,6 +386,7 @@ async function init() {
             a.health = ad.health ?? 1;
             if (ad.knowledge) ad.knowledge.forEach(k => a.knowledge.add(k));
             if (ad.inventory?.deserialize) a.inventory.deserialize(ad.inventory);
+            ConflictSystem.assignFaction(a);
             agents.push(a);
           }
         }
@@ -981,12 +998,48 @@ async function init() {
         }
 
         const child = new Agent(bx, bz);
+        ConflictSystem.assignFaction(child);
         agents.push(child);
         ar.addAgent(child);
         birthGameTimes.push(time.gameTime);
         showNotification(`${evt.parentName} has a child — ${child.name}`, 'social');
         historyLog.add('birth', `${evt.parentName} has a child — ${child.name}`, time.day);
       }
+
+      // ── DisasterSystem tick ─────────────────────────────────────────────
+      disasterSystem.tick(delta, world, time.day, world.seed);
+      if (disasterSystem.active && disasterSystem.active._justActivated) {
+        showNotification(`Disaster: ${disasterSystem.active.type}`, 'env');
+      }
+
+      // ── ConflictSystem cooldown tick ────────────────────────────────────
+      ConflictSystem.updateCooldowns(agents, delta);
+
+      // ── SettlementSystem tick ───────────────────────────────────────────
+      settlementSystem.tick(delta, agents, world, time.day);
+      settlementSystem.updateMembership(agents);
+      for (const s of settlementSystem.settlements) {
+        settlementSystem.nameSettlement(s, agents);
+      }
+
+      // ── Achievements tick ───────────────────────────────────────────────
+      const aliveCount = agents.filter(a => a.health > 0).length;
+      const newAchievements = achievements.tick({
+        agents,
+        conceptGraph,
+        day: time.day,
+        population: aliveCount,
+      });
+      for (const a of newAchievements) {
+        showNotification(`${a.icon} Achievement unlocked: ${a.title}`, 'social');
+        historyLog.add('discovery', `Achievement unlocked: ${a.title} — ${a.description}`, time.day);
+      }
+
+      // ── LineageTracker — record first discoveries ────────────────────────
+      for (const evt of (conceptGraph._pendingLineageEvents ?? [])) {
+        lineageTracker.record(evt.conceptId, evt.agent, time.day);
+      }
+      if (conceptGraph._pendingLineageEvents) conceptGraph._pendingLineageEvents.length = 0;
     }
 
     // ── Fire warmth & light at night (CAD-301) ──────────────────────────
