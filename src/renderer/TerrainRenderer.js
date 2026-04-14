@@ -22,7 +22,7 @@ const TILE_COLOR_HSL = {
   [TileType.BEACH]:    [ 42, 60, 72],
   [TileType.GRASS]:    [ 94, 62, 50],
   [TileType.WOODLAND]: [110, 52, 38],
-  [TileType.DESERT]:   [ 38, 55, 62],
+  [TileType.DESERT]:   [ 35, 46, 57],
   [TileType.FOREST]:   [132, 66, 30],
   [TileType.STONE]:    [ 28, 22, 62],
   [TileType.MOUNTAIN]: [215, 18, 68],
@@ -554,12 +554,17 @@ export class TerrainRenderer {
           if (tiles.length === 0) continue;
           const placements = this._expandPlacements(tiles);
 
+          // CAD-211: Tree lifecycle stage scale multiplier
+          const STAGE_SCALE = { seedling: 0.2, sapling: 0.5, mature: 1.0, old: 1.1 };
+
           // Trunk — static, no resource update; per-tree scale and colour variation
           const trunkMesh = this._makeInstanced(new THREE.CylinderGeometry(trunk.radT, trunk.radB, 0.42, 5),
             new THREE.MeshLambertMaterial({ color: trunk.color }), placements.length);
           this._applyTransforms(placements, trunkMesh,
             dummy, ({ tile }, rng) => {
-              const sz = scaleMin + rng(36) * scaleRange, tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
+              const stageMult = STAGE_SCALE[tile.treeStage ?? 'mature'] ?? 1.0;
+              const sz = (scaleMin + rng(36) * scaleRange) * stageMult;
+              const tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
               return {
                 pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 2.8, SURF + 0.21 * tH * trunk.hScale * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 2.8],
                 scale: [tW * sz, tH * trunk.hScale * sz, tW * sz],
@@ -590,7 +595,8 @@ export class TerrainRenderer {
           if (fMesh.instanceColor) fMesh.instanceColor.needsUpdate = true;
 
           const foliageXform = ({ tile }, rng, resource) => {
-            const sz   = scaleMin + rng(36) * scaleRange;
+            const stageMult = STAGE_SCALE[tile.treeStage ?? 'mature'] ?? 1.0;
+            const sz   = (scaleMin + rng(36) * scaleRange) * stageMult;
             const tH   = trunk.h0 + rng(30) * trunk.hVar;
             const tTop = SURF + 0.42 * tH * trunk.hScale * trunk.topFrac * sz;
             const rsc  = 0.5 + resource * 0.5;
@@ -606,8 +612,11 @@ export class TerrainRenderer {
           this._applyTransforms(placements, fMesh, dummy, (p, rng) => foliageXform(p, rng, 1));
           this._plantUpdaters.push({ mesh: fMesh, placements, updateFn: ({ tile }, rng) => {
             const r = tile.resource;
+            // CAD-211: old trees get darker, more gnarled colour (darken by 30%)
+            const isOldTree = (tile.treeStage === 'old');
+            const oldDim = isOldTree ? 0.70 : 1.0;
             return { ...foliageXform({ tile }, rng, r),
-              color: [lush[0]*r + sparse[0]*(1-r), lush[1]*r + sparse[1]*(1-r), lush[2]*r + sparse[2]*(1-r)] };
+              color: [(lush[0]*r + sparse[0]*(1-r)) * oldDim, (lush[1]*r + sparse[1]*(1-r)) * oldDim, (lush[2]*r + sparse[2]*(1-r)) * oldDim] };
           }});
         }
 
@@ -748,6 +757,34 @@ export class TerrainRenderer {
         m.instanceMatrix.needsUpdate = true;
         this.scene.add(m); this._meshes.push(m);
       });
+
+      // ── CAD-214: Desert rock formations (mesa stumps) ──────────────────
+      const rockFormationTiles = buckets[TileType.DESERT].filter(t => this._rng(t.x, t.z, 80) < 0.18);
+      if (rockFormationTiles.length > 0) {
+        const mesaGeom = new THREE.ConeGeometry(0.20, 0.30, 5);
+        const mesaMat  = new THREE.MeshLambertMaterial({ color: 0x9e7a4a });
+        const mesaMesh = new THREE.InstancedMesh(mesaGeom, mesaMat, rockFormationTiles.length);
+        rockFormationTiles.forEach((tile, i) => {
+          const ox  = (this._rng(tile.x, tile.z, 81) - 0.5) * 1.4;
+          const oz  = (this._rng(tile.x, tile.z, 82) - 0.5) * 1.4;
+          const h   = 0.5 + this._rng(tile.x, tile.z, 83) * 1.2;
+          const w   = 0.7 + this._rng(tile.x, tile.z, 84) * 0.8;
+          dummy.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
+            desertSurfY + 0.15 * h,
+            tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+          );
+          dummy.scale.set(w, h, w);
+          dummy.rotation.set(0, this._rng(tile.x, tile.z, 85) * Math.PI * 2, 0);
+          dummy.updateMatrix();
+          mesaMesh.setMatrixAt(i, dummy.matrix);
+        });
+        mesaMesh.castShadow = true;
+        mesaMesh.receiveShadow = true;
+        mesaMesh.instanceMatrix.needsUpdate = true;
+        this.scene.add(mesaMesh);
+        this._meshes.push(mesaMesh);
+      }
     }
 
     // ── Shells on BEACH tiles ────────────────────────────────────────────
@@ -1640,6 +1677,76 @@ export class TerrainRenderer {
         if (foliageMesh.instanceColor) foliageMesh.instanceColor.needsUpdate = true;
       }
     }
+  }
+
+  // ── CAD-119: Snow overlay ──────────────────────────────────────────────
+
+  /**
+   * CAD-119 — Snow overlay toggle.
+   * Call with true during winter to add thin white PlaneGeometry overlays on
+   * MOUNTAIN, GLACIER, and high-elevation STONE tiles. Call with false to remove.
+   * @param {boolean} enabled
+   */
+  setSnow(enabled) {
+    // Remove any existing snow overlay meshes
+    if (this._snowMeshes) {
+      for (const m of this._snowMeshes) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+      }
+      this._snowMeshes = null;
+    }
+    if (!enabled) return;
+
+    this._snowMeshes = [];
+    const dummy = new THREE.Object3D();
+
+    // Collect eligible tiles: MOUNTAIN, GLACIER, and STONE tiles with elevation > 0.36
+    const snowTiles = [];
+    for (let z = 0; z < this.world.height; z++) {
+      for (let x = 0; x < this.world.width; x++) {
+        const tile = this.world.tiles[z][x];
+        if (
+          tile.type === TileType.MOUNTAIN ||
+          tile.type === TileType.GLACIER  ||
+          (tile.type === TileType.STONE && tile.elevation > 0.36)
+        ) {
+          snowTiles.push(tile);
+        }
+      }
+    }
+    if (snowTiles.length === 0) return;
+
+    const snowGeom = new THREE.PlaneGeometry(TILE_SIZE * 0.88, TILE_SIZE * 0.88);
+    const snowMat  = new THREE.MeshLambertMaterial({
+      color: 0xf0f6ff,
+      transparent: true,
+      opacity: 0.82,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const snowMesh = new THREE.InstancedMesh(snowGeom, snowMat, snowTiles.length);
+    snowMesh.receiveShadow = true;
+
+    snowTiles.forEach((tile, i) => {
+      const surfH = TILE_HEIGHT[tile.type] ?? 0.14;
+      const baseH = surfH + tile.elevation * 0.08;
+      // Place plane just above tile surface, horizontal (rotated -PI/2 around X)
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2,
+        baseH + 0.035,
+        tile.z * TILE_SIZE + TILE_SIZE / 2,
+      );
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      snowMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    snowMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(snowMesh);
+    this._snowMeshes = [snowMesh];
   }
 
   /** Returns the approximate top-surface Y for a given tile type */
