@@ -84,6 +84,44 @@ export class World {
     }
   }
 
+  /**
+   * Domestication feedback: animals near buildings produce resources faster.
+   * Cows within 4 tiles of a building drop milk items every 45s.
+   * Chicken nests within 4 tiles of a building get a 1.3x egg rate bonus.
+   * @param {number} delta - game-seconds since last tick
+   * @param {Array} buildings - array of building objects with { x, z }
+   */
+  updateDomestication(delta, buildings) {
+    if (!buildings || buildings.length === 0) return;
+
+    const nearBuilding = (px, pz) =>
+      buildings.some(b => Math.hypot(b.x - px, b.z - pz) <= 4);
+
+    // Cows: produce milk item every 45s when near a building
+    for (const cow of this.cows) {
+      if (!nearBuilding(cow.x, cow.z)) continue;
+      if (cow.productionTimer === undefined) cow.productionTimer = 45;
+      cow.productionTimer -= delta;
+      if (cow.productionTimer <= 0) {
+        cow.productionTimer = 45;
+        const tx = Math.floor(cow.x);
+        const tz = Math.floor(cow.z);
+        this.tileItems.addItem(tx, tz, 'milk', 1);
+      }
+    }
+
+    // Chicken nests: 1.3x egg rate when near a building
+    if (this.chickenNests) {
+      for (const [key, nest] of this.chickenNests) {
+        const [nx, nz] = key.split(',').map(Number);
+        if (!nearBuilding(nx, nz)) continue;
+        if (nest.eggs >= 3) continue;
+        // Apply bonus tick (0.3x extra on top of normal updateChickenNests)
+        nest.layTimer -= delta * 0.3;
+      }
+    }
+  }
+
   /** Tick regrowth countdowns. Call once per simulation step with game-time delta. */
   updateCutTrees(delta) {
     for (const [key, data] of this.cutTrees) {
