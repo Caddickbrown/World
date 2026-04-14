@@ -386,4 +386,45 @@ export class World {
     }
     return best;
   }
+
+  // ── Save / Load ───────────────────────────────────────────────────────
+
+  /**
+   * Serialize world state into a plain JS object for saving.
+   * Does not include tile grid (regenerated from seed).
+   */
+  serialize(agents, conceptGraph, gameTime, weatherState) {
+    return {
+      seed: this.seed,
+      cutTrees: [...this.cutTrees.entries()],
+      agents: agents.map(a => ({
+        id: a.id, name: a.name, x: a.x, z: a.z,
+        age: a.age, maxAge: a.maxAge, health: a.health,
+        needs: { ...a.needs },
+        knowledge: [...a.knowledge],
+        inventory: a.inventory.serialize ? a.inventory.serialize() : [],
+        task: a.task,
+      })),
+      conceptGraph: conceptGraph.serialize ? conceptGraph.serialize() : null,
+      gameTime: gameTime,
+      weather: weatherState || null,
+    };
+  }
+
+  /**
+   * Reconstruct a World from saved data.
+   * Returns { world, agentData, gameTime, weather } — caller reconstructs Agent instances.
+   */
+  static deserialize(data) {
+    const world = new World(data.seed);
+    if (data.cutTrees) {
+      world.cutTrees = new Map(data.cutTrees);
+      for (const [key] of world.cutTrees) {
+        const [x, z] = key.split(',').map(Number);
+        const tile = world.getTile(x, z);
+        if (tile) tile.treeCut = true;
+      }
+    }
+    return { world, agentData: data.agents || [], gameTime: data.gameTime || 0, weather: data.weather };
+  }
 }
