@@ -73,6 +73,7 @@ export class GatheringSystem {
     // Deplete tile resource
     if (totalDepletion > 0) {
       tile.resource = Math.max(0, tile.resource - totalDepletion);
+      if (tile.depletionLevel !== undefined) tile.depletionLevel = Math.min(1, tile.depletionLevel + 0.05);
     }
 
     return results;
