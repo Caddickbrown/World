@@ -12,6 +12,7 @@ const TILE_HEIGHT = {
   [TileType.FOREST]:   0.24,
   [TileType.STONE]:    0.34,
   [TileType.MOUNTAIN]: 1.50,
+  [TileType.GLACIER]:  0.64,
 };
 
 // Base colours per tile type (HSL for easy variation)
@@ -25,6 +26,7 @@ const TILE_COLOR_HSL = {
   [TileType.FOREST]:   [132, 66, 30],
   [TileType.STONE]:    [ 28, 22, 62],
   [TileType.MOUNTAIN]: [215, 18, 68],
+  [TileType.GLACIER]:  [200, 45, 88],
 };
 
 const GAP = 0.0; // gap between tiles
@@ -70,6 +72,7 @@ export class TerrainRenderer {
       [TileType.FOREST]:   [],
       [TileType.STONE]:    [],
       [TileType.MOUNTAIN]: [],
+      [TileType.GLACIER]:  [],
     };
 
     for (let z = 0; z < this.world.height; z++) {
@@ -137,6 +140,9 @@ export class TerrainRenderer {
 
     this._buildVegetation(buckets);
     this._buildAnimals(buckets);
+    this._buildRivers();
+    this._buildCaves(buckets);
+    this._buildGlacierSurface(buckets);
   }
 
   // Deterministic per-tile pseudo-random (no Math.random — stable across redraws)
@@ -192,6 +198,197 @@ export class TerrainRenderer {
   }
 
   // ────────────────────────────────────────────────────────────────────────
+
+  /**
+   * CAD-104 — Rivers
+   * Render tiles with tile.river = true as a narrow, slightly-raised blue plane.
+   * The plane sits on top of the underlying tile surface, narrow along one axis
+   * to suggest a flowing channel. Colour is a richer, darker blue than WATER.
+   */
+  _buildRivers() {
+    const riverTiles = [];
+    for (let z = 0; z < this.world.height; z++) {
+      for (let x = 0; x < this.world.width; x++) {
+        const tile = this.world.tiles[z][x];
+        if (tile.river) riverTiles.push(tile);
+      }
+    }
+    if (riverTiles.length === 0) return;
+
+    const dummy = new THREE.Object3D();
+
+    // Main channel: a narrow blue box sitting just above the tile surface
+    const channelGeom = new THREE.BoxGeometry(TILE_SIZE * 0.38, 0.025, TILE_SIZE * 0.38);
+    const channelMat  = new THREE.MeshLambertMaterial({ color: 0x1e6fa8, transparent: true, opacity: 0.88 });
+    const channelMesh = new THREE.InstancedMesh(channelGeom, channelMat, riverTiles.length);
+    channelMesh.receiveShadow = true;
+
+    riverTiles.forEach((tile, i) => {
+      // Surface height of the underlying tile type
+      const surfH = TILE_HEIGHT[tile.type] ?? 0.14;
+      const baseH = surfH + tile.elevation * 0.08;
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2,
+        baseH + 0.015,
+        tile.z * TILE_SIZE + TILE_SIZE / 2,
+      );
+      dummy.scale.set(1, 1, 1);
+      dummy.rotation.set(0, 0, 0);
+      dummy.updateMatrix();
+      channelMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    channelMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(channelMesh);
+    this._meshes.push(channelMesh);
+
+    // Highlight shimmer: a slightly smaller, lighter plane on top for a water-glint effect
+    const shimmerGeom = new THREE.BoxGeometry(TILE_SIZE * 0.22, 0.008, TILE_SIZE * 0.22);
+    const shimmerMat  = new THREE.MeshLambertMaterial({ color: 0x55aadd, transparent: true, opacity: 0.55 });
+    const shimmerMesh = new THREE.InstancedMesh(shimmerGeom, shimmerMat, riverTiles.length);
+
+    riverTiles.forEach((tile, i) => {
+      const surfH = TILE_HEIGHT[tile.type] ?? 0.14;
+      const baseH = surfH + tile.elevation * 0.08;
+      // Offset shimmer slightly so it varies per tile
+      const ox = (this._rng(tile.x, tile.z, 410) - 0.5) * 0.3;
+      const oz = (this._rng(tile.x, tile.z, 411) - 0.5) * 0.3;
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
+        baseH + 0.026,
+        tile.z * TILE_SIZE + TILE_SIZE / 2 + oz,
+      );
+      dummy.scale.set(1, 1, 1);
+      dummy.rotation.set(0, this._rng(tile.x, tile.z, 412) * Math.PI * 2, 0);
+      dummy.updateMatrix();
+      shimmerMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    shimmerMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(shimmerMesh);
+    this._meshes.push(shimmerMesh);
+  }
+
+  /**
+   * CAD-321 — Caves
+   * Render a dark arch/opening on MOUNTAIN tiles where tile.cave = true.
+   * The arch is built from two upright pillars and a lintel (three boxes),
+   * recessed slightly into the mountain cone to suggest a natural cave mouth.
+   */
+  _buildCaves(buckets) {
+    const caveTiles = (buckets[TileType.MOUNTAIN] ?? []).filter(t => t.cave);
+    if (caveTiles.length === 0) return;
+
+    const dummy = new THREE.Object3D();
+
+    // Dark cave opening: a flattened dark ellipse at mountain base
+    const openingGeom = new THREE.SphereGeometry(0.28, 7, 5);
+    const openingMat  = new THREE.MeshLambertMaterial({ color: 0x0a0a0f });
+    const openingMesh = new THREE.InstancedMesh(openingGeom, openingMat, caveTiles.length);
+    openingMesh.castShadow = false;
+    openingMesh.receiveShadow = false;
+
+    // Stone surround: slightly lighter ring around the entrance
+    const surroundGeom = new THREE.TorusGeometry(0.28, 0.08, 6, 8);
+    const surroundMat  = new THREE.MeshLambertMaterial({ color: 0x5a5060 });
+    const surroundMesh = new THREE.InstancedMesh(surroundGeom, surroundMat, caveTiles.length);
+    surroundMesh.castShadow = true;
+
+    caveTiles.forEach((tile, i) => {
+      // Mountains are cones — base is near y=0, place arch near ground level
+      const baseY = 0.18;
+      const cx = tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 17) - 0.5) * 0.15;
+      const cz = tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 18) - 0.5) * 0.15;
+      // Rotate arch to face a random cardinal direction (stable per tile)
+      const facingAngle = Math.floor(this._rng(tile.x, tile.z, 460) * 4) * (Math.PI / 2);
+      const fwdX = Math.sin(facingAngle) * 0.35;
+      const fwdZ = Math.cos(facingAngle) * 0.35;
+
+      // Dark opening: recessed into mountain
+      dummy.position.set(cx + fwdX, baseY + 0.10, cz + fwdZ);
+      dummy.scale.set(1.0, 0.75, 0.35);
+      dummy.rotation.set(0, facingAngle, 0);
+      dummy.updateMatrix();
+      openingMesh.setMatrixAt(i, dummy.matrix);
+
+      // Stone surround ring
+      dummy.position.set(cx + fwdX * 0.95, baseY + 0.10, cz + fwdZ * 0.95);
+      dummy.scale.set(1.0, 0.75, 1.0);
+      dummy.rotation.set(Math.PI / 2, facingAngle, 0);
+      dummy.updateMatrix();
+      surroundMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    openingMesh.instanceMatrix.needsUpdate = true;
+    surroundMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(openingMesh);
+    this.scene.add(surroundMesh);
+    this._meshes.push(openingMesh);
+    this._meshes.push(surroundMesh);
+  }
+
+  /**
+   * CAD-118 — Glaciers surface detail
+   * Add slightly irregular bright-white/pale-blue surface planes on GLACIER tiles
+   * to give them a more textured, frozen look beyond the flat box base tile.
+   */
+  _buildGlacierSurface(buckets) {
+    const glacierTiles = buckets[TileType.GLACIER] ?? [];
+    if (glacierTiles.length === 0) return;
+
+    const dummy = new THREE.Object3D();
+    const surfY = TILE_HEIGHT[TileType.GLACIER] ?? 0.64;
+
+    // Main ice surface: bright white, slightly irregular slab
+    const iceGeom = new THREE.BoxGeometry(TILE_SIZE * 0.92, 0.04, TILE_SIZE * 0.92);
+    const iceMat  = new THREE.MeshStandardMaterial({ color: 0xdff4ff, roughness: 0.65, metalness: 0.05 });
+    const iceMesh = this._makeInstanced(iceGeom, iceMat, glacierTiles.length);
+
+    glacierTiles.forEach((tile, i) => {
+      const baseH = surfY + tile.elevation * 0.08;
+      const heightJitter = (this._rng(tile.x, tile.z, 520) - 0.5) * 0.06;
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 521) - 0.5) * 0.1,
+        baseH + heightJitter + 0.022,
+        tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 522) - 0.5) * 0.1,
+      );
+      dummy.scale.set(
+        0.88 + this._rng(tile.x, tile.z, 523) * 0.14,
+        1.0 + this._rng(tile.x, tile.z, 524) * 0.5,
+        0.88 + this._rng(tile.x, tile.z, 525) * 0.14,
+      );
+      dummy.rotation.set(
+        (this._rng(tile.x, tile.z, 526) - 0.5) * 0.08,
+        this._rng(tile.x, tile.z, 527) * Math.PI * 2,
+        (this._rng(tile.x, tile.z, 528) - 0.5) * 0.08,
+      );
+      dummy.updateMatrix();
+      iceMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    // Pale blue ice cracks/ridges: small elongated boxes scattered across glacier tiles
+    const ridgeTiles = glacierTiles.filter(t => this._rng(t.x, t.z, 530) < 0.55);
+    if (ridgeTiles.length > 0) {
+      const ridgeGeom = new THREE.BoxGeometry(TILE_SIZE * 0.55, 0.06, TILE_SIZE * 0.10);
+      const ridgeMat  = new THREE.MeshLambertMaterial({ color: 0x9bd4e8 });
+      const ridgeMesh = this._makeInstanced(ridgeGeom, ridgeMat, ridgeTiles.length);
+
+      ridgeTiles.forEach((tile, i) => {
+        const baseH = surfY + tile.elevation * 0.08;
+        dummy.position.set(
+          tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 531) - 0.5) * 1.2,
+          baseH + 0.055,
+          tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 532) - 0.5) * 1.2,
+        );
+        dummy.scale.set(1, 1, 1);
+        dummy.rotation.set(0, this._rng(tile.x, tile.z, 533) * Math.PI, 0);
+        dummy.updateMatrix();
+        ridgeMesh.setMatrixAt(i, dummy.matrix);
+      });
+    }
+
+    iceMesh.instanceMatrix.needsUpdate = true;
+  }
 
   _buildVegetation(buckets) {
     const dummy = new THREE.Object3D();
@@ -1450,4 +1647,5 @@ export class TerrainRenderer {
     return TILE_HEIGHT[type] ?? 0.14;
   }
 }
+
 
