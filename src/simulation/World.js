@@ -15,6 +15,7 @@ export const TileType = {
   DESERT:   'DESERT',
   STONE:    'STONE',
   MOUNTAIN: 'MOUNTAIN',
+  GLACIER:  'GLACIER',
 };
 
 export class World {
@@ -23,6 +24,9 @@ export class World {
     this.height = WORLD_HEIGHT;
     this.seed = seed;
     this.tiles = this._generate();
+    this._generateGlaciers();
+    this._generateRivers();
+    this._generateCaves();
     this.glacierData = this._initGlaciers();
     /** "x,z" → { countdown: gameSeconds } for felled trees awaiting regrowth */
     this.cutTrees = new Map();
@@ -208,7 +212,7 @@ export class World {
 
         const baseElev = {
           WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22,
-          DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5,
+          DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60,
         }[type];
         const elev = baseElev + (Math.sin(x * 3.7 + z * 2.3 + this.seed) * 0.5 + 0.5) * 0.06;
 
@@ -232,7 +236,7 @@ export class World {
     }
 
     // Third pass: guarantee at least one tile of each base terrain type.
-    const baseElevations = { WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22, DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5 };
+    const baseElevations = { WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22, DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60 };
     const present = new Set();
     for (let z = 0; z < this.height; z++)
       for (let x = 0; x < this.width; x++)
@@ -286,14 +290,19 @@ export class World {
     return tiles;
   }
 
-  // ── Glaciers ──────────────────────────────────────────────────────────
+  // ── Glaciers (tile-type generation) ──────────────────────────────────
 
-  _initGlaciers() {
-    const data = new Map();
+  /**
+   * Convert clusters of STONE tiles that are adjacent to MOUNTAIN tiles into GLACIER tiles.
+   * Uses a seeded RNG so placement is deterministic per seed.
+   * ~40% of qualifying STONE tiles become glaciers.
+   */
+  _generateGlaciers() {
     for (let z = 0; z < this.height; z++) {
       for (let x = 0; x < this.width; x++) {
-        if (this.tiles[z][x].type !== TileType.STONE) continue;
-        // Glacier if any 8-directional neighbor is MOUNTAIN (cold high-elevation zone)
+        const tile = this.tiles[z][x];
+        if (tile.type !== TileType.STONE) continue;
+        // Only convert STONE tiles that touch a MOUNTAIN tile (8-directional)
         const nearMountain = [-1, 0, 1].some(dz =>
           [-1, 0, 1].some(dx => {
             if (dx === 0 && dz === 0) return false;
@@ -302,7 +311,113 @@ export class World {
             return this.tiles[nz][nx].type === TileType.MOUNTAIN;
           })
         );
-        if (nearMountain) data.set(`${x},${z}`, { x, z, melt: 0 });
+        if (nearMountain && this._rng(x, z, 500) < 0.40) {
+          tile.type = TileType.GLACIER;
+          tile.elevation = 0.60;
+        }
+      }
+    }
+  }
+
+  // ── Rivers ────────────────────────────────────────────────────────────
+
+  /**
+   * Trace rivers from high-elevation tiles downhill toward water/beach.
+   * Rivers are represented as an overlay flag (tile.river = true) rather than
+   * replacing the tile type, so the underlying terrain (GRASS, STONE, etc.) is
+   * preserved and traversal rules can still apply.
+   *
+   * Algorithm:
+   *   1. Pick seed tiles on MOUNTAIN / STONE borders via seeded RNG (~8% chance).
+   *   2. From each seed, walk to the lowest adjacent neighbour until we hit
+   *      WATER, BEACH, or DEEP_WATER, or reach a maximum path length.
+   *   3. Mark every visited tile with river = true.
+   */
+  _generateRivers() {
+    const RIVER_SEED_CHANCE = 0.08;
+    const MAX_RIVER_LENGTH  = 24;
+    const TERMINAL_TYPES = new Set([TileType.WATER, TileType.DEEP_WATER, TileType.BEACH]);
+    const BLOCKED_TYPES  = new Set([TileType.GLACIER, TileType.MOUNTAIN]);
+
+    // Build an elevation map: higher noise value = higher ground
+    // We use the raw noise value for flow direction (continuous, not bucketed)
+    const elevAt = (x, z) => this._noise(x, z);
+
+    const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        // Seed rivers on MOUNTAIN and upper-STONE tiles
+        if (tile.type !== TileType.MOUNTAIN && tile.type !== TileType.STONE) continue;
+        if (this._rng(x, z, 400) >= RIVER_SEED_CHANCE) continue;
+
+        // Trace downhill
+        let cx = x, cz = z;
+        for (let step = 0; step < MAX_RIVER_LENGTH; step++) {
+          const currentTile = this.tiles[cz][cx];
+          if (TERMINAL_TYPES.has(currentTile.type)) break;
+
+          // Mark as river overlay
+          currentTile.river = true;
+
+          // Find steepest downhill neighbour
+          const curElev = elevAt(cx, cz);
+          let bestElev = curElev;
+          let bestX = -1, bestZ = -1;
+
+          for (const [dx, dz] of dirs) {
+            const nx = cx + dx, nz = cz + dz;
+            if (nx < 0 || nx >= this.width || nz < 0 || nz >= this.height) continue;
+            const neighbour = this.tiles[nz][nx];
+            if (BLOCKED_TYPES.has(neighbour.type)) continue;
+            const nElev = elevAt(nx, nz);
+            if (nElev < bestElev) {
+              bestElev = nElev;
+              bestX = nx;
+              bestZ = nz;
+            }
+          }
+
+          // No lower neighbour found — river ends (flat or local minimum)
+          if (bestX === -1) break;
+
+          cx = bestX;
+          cz = bestZ;
+        }
+      }
+    }
+  }
+
+  // ── Caves ─────────────────────────────────────────────────────────────
+
+  /**
+   * Mark ~10% of MOUNTAIN tiles as having a cave entrance.
+   * Caves provide shelter: agents can sleep in them without a building.
+   * The cave flag is tile.cave = true.
+   */
+  _generateCaves() {
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        if (tile.type !== TileType.MOUNTAIN) continue;
+        if (this._rng(x, z, 450) < 0.10) {
+          tile.cave = true;
+          /** Caves are sheltered: agents can rest here without a building */
+          tile.isShelter = true;
+        }
+      }
+    }
+  }
+
+  // ── Glaciers (melt data) ──────────────────────────────────────────────
+
+  _initGlaciers() {
+    const data = new Map();
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        if (this.tiles[z][x].type !== TileType.GLACIER) continue;
+        data.set(`${x},${z}`, { x, z, melt: 0 });
       }
     }
     return data;
@@ -325,22 +440,40 @@ export class World {
     return this.tiles[tz][tx];
   }
 
-  /** Base walkability: used for spawning/birth. Blocks water and mountains regardless of knowledge. */
+  /** Base walkability: used for spawning/birth. Blocks water, mountains, and glaciers regardless of knowledge. */
   isWalkable(x, z) {
     const tile = this.getTile(x, z);
-    return tile !== null && tile.type !== TileType.WATER && tile.type !== TileType.DEEP_WATER && tile.type !== TileType.MOUNTAIN;
+    if (!tile) return false;
+    return tile.type !== TileType.WATER
+        && tile.type !== TileType.DEEP_WATER
+        && tile.type !== TileType.MOUNTAIN
+        && tile.type !== TileType.GLACIER;
   }
 
   /**
    * Knowledge-aware traversal check used by agent movement.
    * Sailing unlocks water, mountain_climbing unlocks mountains.
+   * Rivers are passable but cost extra energy (handled by the caller via tile.river flag).
+   * Glaciers are always impassable.
    */
   canTraverse(x, z, knowledge) {
     const tile = this.getTile(x, z);
     if (!tile) return false;
     if (tile.type === TileType.WATER || tile.type === TileType.DEEP_WATER) return knowledge.has('sailing');
     if (tile.type === TileType.MOUNTAIN) return knowledge.has('mountain_climbing');
+    if (tile.type === TileType.GLACIER) return false;
     return true;
+  }
+
+  /**
+   * Movement energy cost multiplier for a tile.
+   * River tiles cost 1.8x energy without rope_bridge knowledge, 1.0x with it.
+   */
+  traversalCost(x, z, knowledge) {
+    const tile = this.getTile(x, z);
+    if (!tile) return 1.0;
+    if (tile.river) return knowledge.has('rope_bridge') ? 1.0 : 1.8;
+    return 1.0;
   }
 
   /** True if any of the 4 orthogonal neighbours is the given tile type */
