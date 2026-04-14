@@ -18,8 +18,9 @@ export class ConceptGraph {
   /**
    * Check whether this agent can discover any concept given their current tile.
    * Returns the concept ID if a discovery occurred, otherwise null.
+   * @param {number} [currentDay] - current game day, used for first-discoverer tracking
    */
-  checkDiscovery(agent, tile, delta, world, allAgents = []) {
+  checkDiscovery(agent, tile, delta, world, allAgents = [], currentDay = 0) {
     for (const [id, concept] of this.concepts) {
       if (agent.knowledge.has(id)) continue;
       if (!this._prerequisitesMet(agent, concept)) continue;
@@ -38,6 +39,12 @@ export class ConceptGraph {
         if (nearFire) prob *= 30;
       }
       if (Math.random() < prob) {
+        // Track first-ever discoverer before granting
+        const knowers = this.knownBy.get(id);
+        if (knowers && knowers.size === 0) {
+          concept.firstDiscoverer = { name: agent.name, id: agent.id, day: currentDay };
+        }
+
         this._grant(agent, id);
         this.events.push({ type: 'discovery', agentId: agent.id, agentName: agent.name, conceptId: id });
         return id;
