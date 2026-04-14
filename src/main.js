@@ -928,6 +928,33 @@ async function init() {
       }
     }
 
+    // ── Fire warmth & light at night (CAD-301) ──────────────────────────
+      const isNight = time.timeOfDay > 0.75 || time.timeOfDay < 0.25;
+      if (isNight && world.naturalFires.size > 0) {
+        // Boost fire light intensity at night
+        if (wr._fireLights?.size) {
+          for (const { light } of wr._fireLights.values()) {
+            light.intensity = Math.max(light.intensity, 2.8);
+          }
+        }
+        // Agents near fires get warmth bonus (energy recovery)
+        for (const agent of agents) {
+          if (agent.health <= 0) continue;
+          for (const key of world.naturalFires.keys()) {
+            const [fx, fz] = key.split(',').map(Number);
+            const dist = Math.hypot(agent.x - fx, agent.z - fz);
+            if (dist < 4) {
+              agent.needs.energy = Math.min(1, (agent.needs.energy ?? 0) + 0.0003 * delta);
+              break; // one fire bonus is enough
+            }
+          }
+        }
+        // Slight ambient boost when fires exist at night
+        if (wr._hemi) {
+          wr._hemi.intensity = Math.max(wr._hemi.intensity, 0.45);
+        }
+      }
+
     // Rendering always runs (for smooth camera)
     wr.setTimeOfDay(time.timeOfDay);
     wr.setWeather(weather.meta);
