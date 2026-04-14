@@ -28,4 +28,26 @@ export class HistoryLog {
   static icon(type) {
     return { discovery: '💡', birth: '👶', death: '💀', weather: '🌩️', milestone: '🏆' }[type] || '📋';
   }
+
+  /**
+   * Format a death event as a human-readable string.
+   * @param {object} agent — must have .name
+   * @param {string} cause — 'starvation', 'old_age', or 'unknown'
+   * @returns {string}
+   */
+  static formatDeath(agent, cause) {
+    const causeText = { starvation: 'starvation', old_age: 'old age', unknown: 'unknown causes' }[cause] || cause;
+    return agent.name + ' died of ' + causeText;
+  }
+
+  /**
+   * Convenience: log a death event with formatted message.
+   * @param {object} agent
+   * @param {string} cause
+   * @param {number} day
+   */
+  addDeath(agent, cause, day) {
+    const message = HistoryLog.formatDeath(agent, cause) + ' (Day ' + day + ')';
+    this.add('death', message, day);
+  }
 }
