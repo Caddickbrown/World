@@ -7,6 +7,7 @@ import { TerrainRenderer }   from './renderer/TerrainRenderer.js';
 import { AgentRenderer }     from './renderer/AgentRenderer.js';
 import { BuildingRenderer }  from './renderer/BuildingRenderer.js';
 import { WildHorse }         from './simulation/WildHorse.js';
+import { Predator }          from './simulation/Predator.js';
 import { WildHorseRenderer } from './renderer/WildHorseRenderer.js';
 import { SheepRenderer }     from './renderer/SheepRenderer.js';
 import { PigRenderer }       from './renderer/PigRenderer.js';
@@ -28,6 +29,7 @@ import { SettlementSystem }  from './systems/SettlementSystem.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
+const PREDATOR_COUNT = 3;
 
 // ── Error handling ──────────────────────────────────────────────────────────
 
@@ -87,6 +89,7 @@ async function init() {
   let world; let conceptGraph; let terrainRenderer; let ar; let buildingRenderer; let time; let weather;
   let horses = [];
   let horseRenderer;
+  let predators = [];
   let butterflyRenderer;
   let beeRenderer;
   let sheepRenderer;
@@ -107,6 +110,7 @@ async function init() {
   horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
   horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
   sheepRenderer     = new SheepRenderer(wr.scene, world);
+  predators = world.getWildHorseSpawnPoints(PREDATOR_COUNT).map(p => new Predator(p.x, p.z, Math.random() < 0.7 ? 'wolf' : 'bear'));
   pigRenderer     = new PigRenderer(wr.scene, world);
   highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
   butterflyRenderer = new ButterflyRenderer(wr.scene, world);
@@ -939,6 +943,10 @@ async function init() {
       // Tick wild horse simulation
       for (const horse of horses) horse.tick(delta, world, horses);
 
+      // Tick predators (food chain)
+      const sheepArr = sheepRenderer ? sheepRenderer.sheep : [];
+      for (const pred of predators) pred.tick(delta, agents, world, sheepArr);
+
       // Handle agent-lit campfires
       if (world.campfireEvents?.length) {
         for (const evt of world.campfireEvents) {
@@ -1096,7 +1104,7 @@ async function init() {
     ar.update();
     buildingRenderer.checkAgents(agents);
     horseRenderer?.update();
-    sheepRenderer?.update(delta > 0 ? delta : 0);
+    sheepRenderer?.update(delta > 0 ? delta : 0, predators);
     highlandCowRenderer?.update(delta > 0 ? delta : 0);
     const isSunny = !weather.isRaining && !weather.isStorm;
     butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
