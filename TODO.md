@@ -3,16 +3,16 @@
 ## Backlog
 
 ### Simulation depth
-- [ ] Starvation death — agents die when hunger stays at 0 for N game-seconds; drop inventory, count in game over
-- [ ] Cooking as conversion — agent with fire + cooking converts raw fish/meat in inventory to cooked (consume wood as fuel)
+- [x] Starvation death — agents die when hunger stays at 0 for N game-seconds; drop inventory, count in game over
+- [x] Cooking as conversion — agent with fire + cooking converts raw fish/meat in inventory to cooked (consume wood as fuel)
 - [ ] Disease — infection spreading between nearby agents; medicine/herbs reduce risk or duration; sick agents drain faster or gather less
-- [ ] Old-age weakening — slower movement and/or lower gather yield as age approaches life expectancy
+- [x] Old-age weakening — slower movement and/or lower gather yield as age approaches life expectancy
 
 ### World & environment
-- [ ] Save/load — persist world seed, tiles, tileItems, agents, conceptGraph, time, weather, buildings
-- [ ] World seed input — show current seed in UI; "new world with this seed" and "enter seed" for replay/sharing
+- [x] Save/load — persist world seed, tiles, tileItems, agents, conceptGraph, time, weather, buildings
+- [x] World seed input — show current seed in UI; "new world with this seed" and "enter seed" for replay/sharing
 - [ ] Rivers — new tile type or overlay; crossable only with Rope (or raft concept)
-- [ ] Resource depletion feedback — overgrazed grass/forest tiles slowly degrade (e.g. cap or "degraded" state)
+- [x] Resource depletion feedback — overgrazed grass/forest tiles slowly degrade (e.g. cap or "degraded" state)
 - [ ] Caves — new tile type or feature on mountain/stone; shelter from weather, maybe +discovery chance for fire or art
 - [ ] Lightning strikes a tree → turns it into a dead tree (requires tile state + renderer rebuild)
 
@@ -30,17 +30,17 @@
 - [ ] Religion/culture — belief concepts that spread in subgroups and subtly alter behaviour (e.g. rest near buildings)
 
 ### UX & polish
-- [ ] Mini-map — 2D overview of terrain (colour by type), agent dots, maybe fires
-- [ ] Timeline/history — scrollable log of discoveries, births, weather events, population milestones
-- [ ] Achievements — e.g. "Survive 100 days", "Discover all Era 1 concepts", "Population 50"; store in localStorage
+- [x] Mini-map — 2D overview of terrain (colour by type), agent dots, maybe fires
+- [x] Timeline/history — scrollable log of discoveries, births, weather events, population milestones
+- [x] Achievements — e.g. "Survive 100 days", "Discover all Era 1 concepts", "Population 50"; store in localStorage
 - [ ] Fire gives light and heat at night — scale ambient/point lights by fire proximity and time-of-day; stronger cold at night
 - [ ] More discovery condition types — e.g. has_item, season, near_fire (in concepts.json + ConceptGraph)
 
 ### Technical & content
 - [ ] Web Workers — run simulation tick in worker; main thread only render + input (scale to larger populations)
 - [ ] Progressive Web App — service worker + manifest; installable, offline-capable
-- [ ] Tool items — add items in items.json with category "tool" and effects.activities / gatherMult (GatheringSystem already supports)
-- [ ] Crafting — recipes (e.g. wood + stone → stone_tool; ore + fire → metal_tool); gate on concepts, consume from inventory
+- [x] Tool items — add items in items.json with category "tool" and effects.activities / gatherMult (GatheringSystem already supports)
+- [x] Crafting — recipes (e.g. wood + stone → stone_tool; ore + fire → metal_tool); gate on concepts, consume from inventory
 
 ### Cross-cutting / deeper
 - [ ] Carrying capacity from water — factor in fishing (water tiles) so coasts/islands can support population
