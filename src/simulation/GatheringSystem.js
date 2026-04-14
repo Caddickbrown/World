@@ -142,6 +142,27 @@ export class GatheringSystem {
   }
 
   /**
+   * Attempt a hunt on the current tile.
+   * Agents with 'hunting' knowledge on WOODLAND/FOREST/GRASS tiles have
+   * an 8% chance per gather tick of a successful hunt yielding raw_meat.
+   * TODO: track animal populations per tile for realistic depletion
+   * @param {object} agent - The hunting agent
+   * @param {object} tile - The tile being hunted on
+   * @returns {Array<{itemId: string, quantity: number}>} hunt results
+   */
+  static hunt(agent, tile) {
+    if (!agent.knowledge.has('hunting')) return [];
+    const huntTiles = ['WOODLAND', 'FOREST', 'GRASS'];
+    if (!huntTiles.includes(tile.type)) return [];
+
+    // 8% chance of a successful hunt per tick
+    if (Math.random() > 0.08) return [];
+
+    const qty = 1 + Math.floor(Math.random() * 2); // 1-2
+    return [{ itemId: 'raw_meat', quantity: qty }];
+  }
+
+  /**
    * Attempt to cook a raw food item using wood as fuel.
    * Requires agent to have 'fire' and 'cooking' knowledge.
    * @param {object} agent - The agent attempting to cook
