@@ -85,6 +85,9 @@ export class Agent {
 
     /** Starvation: tracks how long hunger has been at zero (game-sec) */
     this.starvationTimer = 0;
+
+    /** Cause of death: 'starvation', 'old_age', or null if alive */
+    this.deathCause = null;
   }
 
   static get TASKS() {
@@ -139,6 +142,7 @@ export class Agent {
       if (this.starvationTimer >= 15) {
         this._dropAllItems(world);
         this.isDead = true;
+        this.deathCause = 'starvation';
         this.health = 0;
         return;
       }
@@ -158,6 +162,7 @@ export class Agent {
     if (this.age > this.lifeExpectancy) {
       this._dropAllItems(world);
       this.isDead = true;
+      this.deathCause = 'old_age';
       this.health = 0;
       return; // dead of old age
     }
