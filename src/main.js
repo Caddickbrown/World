@@ -806,6 +806,12 @@ async function init() {
     const _tideEl = document.getElementById('world-tide');
     if (_tideEl) _tideEl.textContent = _tideLevel > 0.3 ? '🌊 Tide: High' : _tideLevel < -0.3 ? '🌊 Tide: Low' : '🌊 Tide: Mid';
 
+    // CAD-122: tide indicator
+    const _totalTime = weather._totalTime ?? 0;
+    const _tideLevel = Math.sin((_totalTime / 900) * Math.PI * 2); // ~15 min period
+    const _tideEl = document.getElementById('world-tide');
+    if (_tideEl) _tideEl.textContent = _tideLevel > 0.3 ? '🌊 Tide: High' : _tideLevel < -0.3 ? '🌊 Tide: Low' : '🌊 Tide: Mid';
+
     // ── Game over detection ───────────────────────────────────────────
     if (!gameOver && agents.length > 0 && alive === 0) {
       gameOver = true;
