@@ -1304,6 +1304,7 @@ async function init() {
     wr.render();
     updateHUD();
     updateOverlays();
+    updateOverlays();
     } catch (e) {
       const msg = e?.message || e?.toString?.() || 'Game loop error';
       showError(msg, e);
@@ -1575,6 +1576,82 @@ async function init() {
     if (resourceOverlayVisible) drawResourceOverlay();
     if (heatmapOverlayVisible) drawHeatmapOverlay();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+  }
+
+
+  // ── CAD-158: Population graph ─────────────────────────────────────────
+  let popGraphVisible = false;
+  const popGraphPanel = document.getElementById('pop-graph-panel');
+  const popGraphCanvas = document.getElementById('pop-graph');
+  const popGraphBtn    = document.getElementById('pop-graph-btn');
+  const popGraphClose  = document.getElementById('pop-graph-close');
+
+  function drawPopGraph() {
+    if (!popGraphCanvas || !popGraphVisible) return;
+    const ctx = popGraphCanvas.getContext('2d');
+    const W = popGraphCanvas.width;
+    const H = popGraphCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    if (populationHistory.length < 2) {
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Not enough data yet...', W / 2, H / 2);
+      return;
+    }
+    const maxCount = Math.max(...populationHistory.map(p => p.count), 1);
+    const pad = 6;
+    const gW = W - pad * 2;
+    const gH = H - pad * 2;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, pad + gH / 2);
+    ctx.lineTo(pad + gW, pad + gH / 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(80,220,120,0.9)';
+    ctx.lineWidth = 1.5;
+    populationHistory.forEach((p, i) => {
+      const x = pad + (i / (populationHistory.length - 1)) * gW;
+      const y = pad + gH - (p.count / maxCount) * gH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.beginPath();
+    populationHistory.forEach((p, i) => {
+      const x = pad + (i / (populationHistory.length - 1)) * gW;
+      const y = pad + gH - (p.count / maxCount) * gH;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(pad + gW, pad + gH);
+    ctx.lineTo(pad, pad + gH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(80,220,120,0.12)';
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(maxCount), pad, pad + 9);
+    ctx.textAlign = 'right';
+    const lastDay = populationHistory[populationHistory.length - 1]?.day ?? 0;
+    ctx.fillText('Day ' + lastDay, pad + gW, pad + gH - 2);
+  }
+
+  if (popGraphBtn) popGraphBtn.addEventListener('click', () => {
+    popGraphVisible = !popGraphVisible;
+    popGraphPanel.style.display = popGraphVisible ? 'block' : 'none';
+    popGraphBtn.style.background = popGraphVisible ? 'rgba(80,220,120,0.3)' : 'rgba(255,255,255,0.1)';
+    if (popGraphVisible) drawPopGraph();
+  });
+  if (popGraphClose) popGraphClose.addEventListener('click', () => {
+    popGraphVisible = false;
+    popGraphPanel.style.display = 'none';
+    popGraphBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
+  function updateOverlays() {
+    if (popGraphVisible) drawPopGraph();
   }
 
   requestAnimationFrame(frame);
