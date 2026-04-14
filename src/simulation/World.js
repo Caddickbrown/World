@@ -36,6 +36,8 @@ export class World {
     this.predators = [];
     /** Spatial index for fast agent proximity queries */
     this.spatialGrid = new SpatialGrid(WORLD_WIDTH, WORLD_HEIGHT, 4);
+    /** Timer for flora slow tick (tracked by main.js) */
+    this.floraSlowTimer = 0;
   }
 
   /**
@@ -466,6 +468,67 @@ export class World {
       }
     }
     return best;
+  }
+
+
+  // ── Flora slow tick ───────────────────────────────────────────────────
+
+  /**
+   * Flora slow tick — called every ~10 game-seconds.
+   * Handles gradual regrowth and seasonal depletion.
+   * @param {number} delta — game-seconds since last slow tick (≈10)
+   * @param {string} season — 'spring' | 'summer' | 'autumn' | 'winter'
+   */
+  floraSlowTick(delta, season) {
+    const growthMult = { spring: 1.8, summer: 1.2, autumn: 0.6, winter: 0.1 }[season] ?? 1.0;
+
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.getTile(x, z);
+        if (!tile) continue;
+
+        // Regrow depleted tiles
+        if (tile.depletionLevel > 0) {
+          tile.depletionLevel = Math.max(0, tile.depletionLevel - 0.02 * growthMult * (delta / 10));
+        }
+
+        // Seasonal: forest spread chance in spring/summer
+        if (season === 'spring' || season === 'summer') {
+          if (tile.type === TileType.GRASS && Math.random() < 0.001 * growthMult) {
+            // check if any neighbour is WOODLAND — if so, slight chance to become WOODLAND
+            const neighbors = this._getNeighborTiles(x, z);
+            const woodlandNeighbors = neighbors.filter(n => n.type === TileType.WOODLAND).length;
+            if (woodlandNeighbors >= 2 && Math.random() < 0.002) {
+              tile.type = TileType.WOODLAND;
+            }
+          }
+        }
+
+        // Winter: grassland depletionLevel increases slightly
+        if (season === 'winter' && tile.type === TileType.GRASS) {
+          tile.depletionLevel = Math.min(0.3, tile.depletionLevel + 0.005 * (delta / 10));
+        }
+      }
+    }
+  }
+
+  /** Returns the 4 orthogonal neighbour tiles (excluding out-of-bounds). */
+  _getNeighborTiles(x, z) {
+    const neighbors = [];
+    const dirs = [[-1,0],[1,0],[0,-1],[0,1]];
+    for (const [dx, dz] of dirs) {
+      const t = this.getTile(x + dx, z + dz);
+      if (t) neighbors.push(t);
+    }
+    return neighbors;
+  }
+
+  /**
+   * Returns a growth rate multiplier for the given season.
+   * Used by gathering systems to scale yield.
+   */
+  static seasonalGrowthRate(season) {
+    return { spring: 1.5, summer: 1.1, autumn: 0.8, winter: 0.3 }[season] ?? 1.0;
   }
 
   // ── Save / Load ───────────────────────────────────────────────────────
