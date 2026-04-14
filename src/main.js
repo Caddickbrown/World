@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { World, TILE_SIZE, TileType } from './simulation/World.js';
+import { World, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, TileType } from './simulation/World.js';
 import { Agent }             from './simulation/Agent.js';
 import { ConceptGraph }      from './simulation/ConceptGraph.js';
 import { WorldRenderer }     from './renderer/WorldRenderer.js';
@@ -417,6 +417,64 @@ async function init() {
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       minimap.visible = !minimap.visible;
       minimap.canvas.style.display = minimap.visible ? 'block' : 'none';
+    }
+  });
+
+
+  // ── Camera controls: WASD pan, scroll zoom, click-drag, H recentre ──
+  const PAN_SPEED = TILE_SIZE * 0.5; // 0.5 tiles per frame
+  const WORLD_MAX_X = WORLD_WIDTH * TILE_SIZE;
+  const WORLD_MAX_Z = WORLD_HEIGHT * TILE_SIZE;
+  const _keysDown = new Set();
+
+  document.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if (['w','a','s','d'].includes(k) && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      // Don't pan if user is typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      _keysDown.add(k);
+    }
+    if (k === 'h' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      // Recentre camera on agent centroid
+      const alive = agents.filter(a => a.health > 0);
+      if (alive.length === 0) return;
+      const cx = alive.reduce((s, a) => s + a.x * TILE_SIZE, 0) / alive.length;
+      const cz = alive.reduce((s, a) => s + a.z * TILE_SIZE, 0) / alive.length;
+      wr.controls.target.set(cx, 0, cz);
+    }
+  });
+  document.addEventListener('keyup', e => {
+    _keysDown.delete(e.key.toLowerCase());
+  });
+
+  // Middle-button or Alt+Left drag to pan
+  let _camDrag = null;
+  canvas.addEventListener('mousedown', e => {
+    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+      e.preventDefault();
+      _camDrag = { x: e.clientX, y: e.clientY,
+        tx: wr.controls.target.x, tz: wr.controls.target.z };
+      wr.controls.enabled = false;
+    }
+  });
+  canvas.addEventListener('mousemove', e => {
+    if (!_camDrag) return;
+    // Scale drag delta to world units based on camera distance
+    const dist = wr.camera.position.distanceTo(wr.controls.target);
+    const scale = dist / 500;
+    const dx = (e.clientX - _camDrag.x) * scale;
+    const dy = (e.clientY - _camDrag.y) * scale;
+    let nx = _camDrag.tx - dx;
+    let nz = _camDrag.tz - dy;
+    nx = Math.max(0, Math.min(WORLD_MAX_X, nx));
+    nz = Math.max(0, Math.min(WORLD_MAX_Z, nz));
+    wr.controls.target.set(nx, 0, nz);
+  });
+  canvas.addEventListener('mouseup', e => {
+    if (_camDrag) {
+      _camDrag = null;
+      wr.controls.enabled = true;
     }
   });
 
@@ -957,6 +1015,15 @@ async function init() {
       }
 
     // Rendering always runs (for smooth camera)
+    // WASD camera pan
+    if (_keysDown.size > 0) {
+      const t = wr.controls.target;
+      if (_keysDown.has('w')) t.z = Math.max(0, t.z - PAN_SPEED);
+      if (_keysDown.has('s')) t.z = Math.min(WORLD_MAX_Z, t.z + PAN_SPEED);
+      if (_keysDown.has('a')) t.x = Math.max(0, t.x - PAN_SPEED);
+      if (_keysDown.has('d')) t.x = Math.min(WORLD_MAX_X, t.x + PAN_SPEED);
+    }
+
     wr.setTimeOfDay(time.timeOfDay);
     wr.setWeather(weather.meta);
     terrainRenderer.updateAnimals(delta > 0 ? delta : 0);
