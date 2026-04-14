@@ -305,5 +305,33 @@
       "hunger": 0.25
     },
     "spoilRate": 0.015
+  },
+  {
+    "id": "mushrooms",
+    "name": "Mushrooms",
+    "category": "food",
+    "icon": "🍄",
+    "weight": 0.3,
+    "stackSize": 8,
+    "effects": {
+      "hunger": 0.18
+    },
+    "poisonChance": 0.15,
+    "poisonEffect": {
+      "health": -0.25
+    },
+    "spoilRate": 0.010,
+    "seasonPreference": "Autumn",
+    "gatherSource": {
+      "tileTypes": [
+        "FOREST"
+      ],
+      "activity": "foraging",
+      "baseYield": [
+        1,
+        3
+      ],
+      "knowledge": []
+    }
   }
 ]
