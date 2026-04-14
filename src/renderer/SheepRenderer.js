@@ -243,6 +243,66 @@ export class SheepRenderer {
     }
   }
 
+  /**
+   * Spawn a new sheep at the given tile coordinates.
+   * Called by PopulationManager when population is below carrying capacity.
+   */
+  addAnimal(x, z) {
+    const surfY = TerrainRenderer.surfaceY(TileType.GRASS);
+    const offX = (Math.random() - 0.5) * 0.8;
+    const offZ = (Math.random() - 0.5) * 0.8;
+    const homeX = (x + 0.5 + offX) * TILE_SIZE;
+    const homeZ = (z + 0.5 + offZ) * TILE_SIZE;
+    const isBlack = Math.random() < 0.11;
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: isBlack ? 0x1a1a1a : 0xf5f2ec,
+      roughness: 0.72,
+    });
+    const woolPuffs = this._puffData.map(({ geom, x: px, y: py, z: pz }) => {
+      const puff = new THREE.Mesh(geom, bodyMat);
+      puff.position.set(px, py, pz);
+      puff.castShadow = true;
+      return puff;
+    });
+    const head = new THREE.Mesh(this._headGeom, this._faceMat);
+    head.position.set(0, 0.12, 0.26);
+    const eyeL = new THREE.Mesh(this._eyeGeom, this._eyeMat);
+    const eyeR = new THREE.Mesh(this._eyeGeom, this._eyeMat);
+    eyeL.position.set(-0.062, 0.13, 0.355);
+    eyeR.position.set( 0.062, 0.13, 0.355);
+    const legOffsets = [[-0.09, -0.12, 0.07], [0.09, -0.12, 0.07], [-0.09, -0.12, -0.07], [0.09, -0.12, -0.07]];
+    const legs = legOffsets.map(([lx, ly, lz]) => {
+      const leg = new THREE.Mesh(this._legGeom, this._legMat);
+      leg.position.set(lx, ly, lz);
+      return leg;
+    });
+    const group = new THREE.Group();
+    group.add(...woolPuffs, head, eyeL, eyeR, ...legs);
+    group.position.set(homeX, surfY + 0.18, homeZ);
+    group.rotation.y = Math.random() * Math.PI * 2;
+    this.scene.add(group);
+    this._sheep.push({
+      group, bodyMat, legs, homeX, homeZ, surfY,
+      x: homeX / TILE_SIZE, z: homeZ / TILE_SIZE,
+      health: 1.0, isDead: false,
+      phase: Math.random() * Math.PI * 2,
+      wanderAngle: Math.random() * Math.PI * 2,
+      wanderTimer: Math.random() * 4,
+    });
+  }
+
+  /**
+   * Remove the sheep at the given index from the simulation and scene.
+   * Called by PopulationManager during culling.
+   */
+  removeAnimal(index) {
+    if (index < 0 || index >= this._sheep.length) return;
+    const sheep = this._sheep[index];
+    this.scene.remove(sheep.group);
+    sheep.bodyMat.dispose();
+    this._sheep.splice(index, 1);
+  }
+
   dispose() {
     for (const { group, bodyMat } of this._sheep) {
       this.scene.remove(group);
@@ -258,3 +318,4 @@ export class SheepRenderer {
     this._sheep = [];
   }
 }
+
