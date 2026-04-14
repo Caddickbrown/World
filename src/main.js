@@ -632,7 +632,146 @@ async function init() {
       selectedAgent = null;
       selectedTile  = null;
 
-      // Check for nearby animal before falling back to tile
+      // ── Universal inspector: check horses, pigs, sheep, buildings, fires ──
+
+      // 1. Wild horses
+      const HORSE_RADIUS = TILE_SIZE * 1.2;
+      let nearestHorse = null, bestHorseDist = HORSE_RADIUS;
+      for (const horse of horses) {
+        const dist = Math.hypot(groundPoint.x - horse.x * TILE_SIZE, groundPoint.z - horse.z * TILE_SIZE);
+        if (dist < bestHorseDist) { bestHorseDist = dist; nearestHorse = horse; }
+      }
+      if (nearestHorse) {
+        const coat = nearestHorse.coatPreset?.name ?? 'unknown';
+        const tx = Math.floor(nearestHorse.x), tz = Math.floor(nearestHorse.z);
+        const tile = world.getTile(tx, tz);
+        const tileName = tile ? (TILE_LABELS[tile.type]?.name ?? tile.type) : '?';
+        const speed = nearestHorse.gait === 'gallop' ? nearestHorse.runSpeed : nearestHorse.walkSpeed;
+        document.getElementById('info-content').innerHTML = `
+          <div class="info-name">🐴 Wild Horse</div>
+          <div class="info-state" style="opacity:.7;font-size:12px">${nearestHorse.gait.charAt(0).toUpperCase() + nearestHorse.gait.slice(1)}${nearestHorse.rider ? ' · Ridden' : ''}</div>
+          <div style="margin-top:10px">
+            <div class="info-row"><span class="info-label">Coat</span><span style="font-size:12px">${coat}</span></div>
+            <div class="info-row"><span class="info-label">Position</span><span style="font-size:11px;opacity:.7">(${tx}, ${tz})</span></div>
+            <div class="info-row"><span class="info-label">Terrain</span><span style="font-size:12px">${tileName}</span></div>
+            <div class="info-row"><span class="info-label">Speed</span><span style="font-size:12px">${speed.toFixed(2)} t/s</span></div>
+          </div>
+        `;
+        document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 2. Pigs
+      const PIG_RADIUS = TILE_SIZE * 0.9;
+      let nearestPig = null, bestPigDist = PIG_RADIUS;
+      for (const pig of (pigRenderer?._pigs ?? [])) {
+        const wx = pig.group.position.x, wz = pig.group.position.z;
+        const dist = Math.hypot(groundPoint.x - wx, groundPoint.z - wz);
+        if (dist < bestPigDist) { bestPigDist = dist; nearestPig = pig; }
+      }
+      if (nearestPig) {
+        const tx = Math.floor(nearestPig.group.position.x / TILE_SIZE);
+        const tz = Math.floor(nearestPig.group.position.z / TILE_SIZE);
+        const tile = world.getTile(tx, tz);
+        const tileName = tile ? (TILE_LABELS[tile.type]?.name ?? tile.type) : '?';
+        document.getElementById('info-content').innerHTML = `
+          <div class="info-name">🐷 Pig</div>
+          <div class="info-state" style="opacity:.7;font-size:12px">Wildlife · Grassland forager</div>
+          <div style="margin-top:10px">
+            <div class="info-row"><span class="info-label">Position</span><span style="font-size:11px;opacity:.7">(${tx}, ${tz})</span></div>
+            <div class="info-row"><span class="info-label">Terrain</span><span style="font-size:12px">${tileName}</span></div>
+          </div>
+        `;
+        document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 3. Sheep
+      const SHEEP_RADIUS = TILE_SIZE * 0.9;
+      let nearestSheep = null, bestSheepDist = SHEEP_RADIUS;
+      for (const sheep of (sheepRenderer?._sheep ?? [])) {
+        const wx = sheep.group.position.x, wz = sheep.group.position.z;
+        const dist = Math.hypot(groundPoint.x - wx, groundPoint.z - wz);
+        if (dist < bestSheepDist) { bestSheepDist = dist; nearestSheep = sheep; }
+      }
+      if (nearestSheep) {
+        const tx = Math.floor(nearestSheep.group.position.x / TILE_SIZE);
+        const tz = Math.floor(nearestSheep.group.position.z / TILE_SIZE);
+        const tile = world.getTile(tx, tz);
+        const tileName = tile ? (TILE_LABELS[tile.type]?.name ?? tile.type) : '?';
+        const isBlack = nearestSheep.bodyMat?.color?.getHex?.() < 0x333333;
+        document.getElementById('info-content').innerHTML = `
+          <div class="info-name">🐑 ${isBlack ? 'Black Sheep' : 'Sheep'}</div>
+          <div class="info-state" style="opacity:.7;font-size:12px">Wildlife · Grazing</div>
+          <div style="margin-top:10px">
+            <div class="info-row"><span class="info-label">Position</span><span style="font-size:11px;opacity:.7">(${tx}, ${tz})</span></div>
+            <div class="info-row"><span class="info-label">Terrain</span><span style="font-size:12px">${tileName}</span></div>
+          </div>
+        `;
+        document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 4. Buildings
+      const BUILD_RADIUS = TILE_SIZE * 1.5;
+      let nearestBuilding = null, bestBuildDist = BUILD_RADIUS, nearestBuildKey = null;
+      for (const [key, entry] of (buildingRenderer?._buildings ?? new Map())) {
+        const [bx, bz] = key.split(',').map(Number);
+        const wx = (bx + 0.5) * TILE_SIZE, wz = (bz + 0.5) * TILE_SIZE;
+        const dist = Math.hypot(groundPoint.x - wx, groundPoint.z - wz);
+        if (dist < bestBuildDist) { bestBuildDist = dist; nearestBuilding = entry; nearestBuildKey = key; }
+      }
+      if (nearestBuilding && nearestBuildKey) {
+        const [bx, bz] = nearestBuildKey.split(',').map(Number);
+        const tile = world.getTile(bx, bz);
+        const tileName = tile ? (TILE_LABELS[tile.type]?.name ?? tile.type) : '?';
+        const BUILDING_ICONS = {
+          shelter: '🏚️', housing: '🏠', temple: '🏛️', church: '⛪', workshop: '🔨',
+          shrine: '🪔', tree_house: '🌲', barn: '🏠', coop: '🐔',
+        };
+        const icon = BUILDING_ICONS[nearestBuilding.kind] ?? '🏗️';
+        const kindLabel = nearestBuilding.kind.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        // Count agents sleeping in or near this building
+        const sleepers = agents.filter(a => a.health > 0 && a.state === 'sleeping' &&
+          Math.abs(Math.floor(a.x) - bx) < 2 && Math.abs(Math.floor(a.z) - bz) < 2);
+        document.getElementById('info-content').innerHTML = `
+          <div class="info-name">${icon} ${kindLabel}</div>
+          <div class="info-state" style="opacity:.7;font-size:12px">Building · ${tileName}</div>
+          <div style="margin-top:10px">
+            <div class="info-row"><span class="info-label">Position</span><span style="font-size:11px;opacity:.7">(${bx}, ${bz})</span></div>
+            ${sleepers.length > 0 ? `<div class="info-row"><span class="info-label">Occupants</span><span style="font-size:12px">${sleepers.map(a => a.name).join(', ')}</span></div>` : ''}
+          </div>
+        `;
+        document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 5. Active fires
+      const FIRE_RADIUS = TILE_SIZE * 1.2;
+      let nearestFire = null, bestFireDist = FIRE_RADIUS;
+      for (const key of (world.naturalFires?.keys() ?? [])) {
+        const [fx, fz] = key.split(',').map(Number);
+        const wx = (fx + 0.5) * TILE_SIZE, wz = (fz + 0.5) * TILE_SIZE;
+        const dist = Math.hypot(groundPoint.x - wx, groundPoint.z - wz);
+        if (dist < bestFireDist) { bestFireDist = dist; nearestFire = key; }
+      }
+      if (nearestFire) {
+        const [fx, fz] = nearestFire.split(',').map(Number);
+        const tile = world.getTile(fx, fz);
+        const tileName = tile ? (TILE_LABELS[tile.type]?.name ?? tile.type) : '?';
+        const fireData = world.naturalFires.get(nearestFire);
+        document.getElementById('info-content').innerHTML = `
+          <div class="info-name">🔥 Fire</div>
+          <div class="info-state" style="opacity:.7;font-size:12px">Active · ${tileName}</div>
+          <div style="margin-top:10px">
+            <div class="info-row"><span class="info-label">Position</span><span style="font-size:11px;opacity:.7">(${fx}, ${fz})</span></div>
+          </div>
+        `;
+        document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 6. TerrainRenderer animals (crabs, fish, etc.)
       const animal = terrainRenderer.hitTestAnimals(groundPoint.x, groundPoint.z);
       if (animal) {
         document.getElementById('info-content').innerHTML = `
@@ -641,18 +780,19 @@ async function init() {
           <div style="margin-top:10px;font-size:12px;opacity:.85">${animal.description}</div>
         `;
         document.getElementById('info-panel').classList.remove('hidden');
+        return;
+      }
+
+      // 7. Tile fallback
+      const tx = Math.floor(groundPoint.x / TILE_SIZE);
+      const tz = Math.floor(groundPoint.z / TILE_SIZE);
+      const tile = world.getTile(tx, tz);
+      if (tile) {
+        selectedTile = tile;
+        updateTileInfoPanel(tile);
+        document.getElementById('info-panel').classList.remove('hidden');
       } else {
-        // Check for tile click
-        const tx = Math.floor(groundPoint.x / TILE_SIZE);
-        const tz = Math.floor(groundPoint.z / TILE_SIZE);
-        const tile = world.getTile(tx, tz);
-        if (tile) {
-          selectedTile = tile;
-          updateTileInfoPanel(tile);
-          document.getElementById('info-panel').classList.remove('hidden');
-        } else {
-          document.getElementById('info-panel').classList.add('hidden');
-        }
+        document.getElementById('info-panel').classList.add('hidden');
       }
     }
   });
