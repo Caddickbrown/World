@@ -26,6 +26,14 @@ import { Achievements }      from './systems/Achievements.js';
 import { LineageTracker }    from './systems/LineageTracker.js';
 import { CraftingSystem }    from './systems/CraftingSystem.js';
 import { SettlementSystem }  from './systems/SettlementSystem.js';
+import { FireSystem }        from './systems/FireSystem.js';
+import { EcologySystem }     from './systems/EcologySystem.js';
+import { Fox }               from './simulation/Fox.js';
+import { FoxRenderer }       from './renderer/FoxRenderer.js';
+import { Deer }              from './simulation/Deer.js';
+import { DeerRenderer }      from './renderer/DeerRenderer.js';
+import { BirdFlockRenderer } from './renderer/BirdFlockRenderer.js';
+import { PopulationManager } from './simulation/PopulationManager.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -95,6 +103,11 @@ async function init() {
   let sheepRenderer;
   let highlandCowRenderer;
   let flowerRenderer;
+  let foxes = [];
+  let foxRenderer;
+  let deer = [];
+  let deerRenderer;
+  let birdFlockRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -122,6 +135,8 @@ async function init() {
 
   // ── Simulation systems ─────────────────────────────────────────────────
   const disasterSystem   = new DisasterSystem();
+  const fireSystem       = new FireSystem();
+  const ecologySystem    = new EcologySystem();
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
@@ -155,10 +170,25 @@ async function init() {
   let gameOver = false;
   let gameOverAutoResetId = null;
 
+  // ── Follow mode (CAD-156) ───────────────────────────────────────────────
+  let followTarget = null;
+
+  function setFollowTarget(agent) {
+    followTarget = agent || null;
+    const btn = document.getElementById('follow-btn');
+    if (btn) btn.classList.toggle('active', !!followTarget);
+  }
+
+  // Escape cancels follow mode
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') setFollowTarget(null);
+  });
+
   document.getElementById('info-close').addEventListener('click', () => {
     if (selectedAgent) selectedAgent.selected = false;
     selectedAgent = null;
     selectedTile  = null;
+    setFollowTarget(null);
     document.getElementById('info-panel').classList.add('hidden');
   });
 
@@ -229,6 +259,7 @@ async function init() {
     world = new World();
     world.naturalFires = new Map();
     lightningCooldown = 0;
+    fireSystem.clear();
     conceptGraph = new ConceptGraph(conceptsData);
     agents.length = 0;
     const startPop = Number(popSlider.value);
@@ -302,6 +333,7 @@ async function init() {
         world = new World(val);
         world.naturalFires = new Map();
         lightningCooldown = 0;
+        fireSystem.clear();
         conceptGraph = new ConceptGraph(conceptsData);
         agents.length = 0;
         const startPop = Number(popSlider.value);
@@ -379,6 +411,7 @@ async function init() {
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
         lightningCooldown = 0;
+        fireSystem.clear();
         conceptGraph = new ConceptGraph(conceptsData);
         if (saveData.conceptGraph && conceptGraph.deserialize) {
           conceptGraph.deserialize(saveData.conceptGraph);
@@ -827,6 +860,19 @@ async function init() {
       return c ? `<span class="info-tag">${c.icon ?? ''} ${c.name}</span>` : '';
     }).join('');
 
+    // Family info (CAD-186)
+    const family = agent.getFamily ? agent.getFamily(agents) : { parents: [], children: [] };
+    const familyHtml = (() => {
+      let html = '';
+      if (family.parents.length > 0) {
+        html += `<div class="info-row"><span class="info-label">Parents</span><span style="font-size:11px;opacity:.7">${family.parents.map(a => a.name).join(', ')}</span></div>`;
+      }
+      if (family.children.length > 0) {
+        html += `<div class="info-row"><span class="info-label">Children</span><span style="font-size:11px;opacity:.7">${family.children.map(a => a.name).join(', ')}</span></div>`;
+      }
+      return html;
+    })();
+
     document.getElementById('info-content').innerHTML = `
       <div class="info-name">${agent.name}</div>
       <div class="info-state">${(agent.state || 'wandering').charAt(0).toUpperCase() + (agent.state || 'wandering').slice(1)}</div>
@@ -848,6 +894,7 @@ async function init() {
           <span style="font-size:11px;opacity:.5">${(agent.curiosity * 100).toFixed(0)}%</span>
         </div>
         ${agent.task ? `<div class="info-row"><span class="info-label">Task</span><span class="info-tag">${Agent.TASKS[agent.task]?.icon ?? '•'} ${Agent.TASKS[agent.task]?.name ?? agent.task}</span></div>` : ''}
+        ${familyHtml}
       </div>
       ${agent.inventory.stacks.length > 0 ? `
         <div style="margin-top:8px;font-size:11px;opacity:.7">Inventory (${agent.inventory.currentWeight(itemDefs).toFixed(1)}/${agent.inventory.maxWeight.toFixed(0)})</div>
@@ -900,17 +947,28 @@ async function init() {
           showNotification('The skies clear.', 'env');
       }
 
-      // Lightning strikes during storms — can set forest on fire
+      // Lightning strikes during storms — handled by WeatherSystem; fire via FireSystem
       if (weather.current === 'STORM') {
         lightningCooldown -= delta;
         if (lightningCooldown <= 0) {
           lightningCooldown = 35 + Math.random() * 25;
+          // Use WeatherSystem lightning flash state
+          weather.lightningFlash = { x: 0, z: 0, timer: 0.3 }; // placeholder for global flash
           const forestTiles = world.getTilesOfType(TileType.FOREST);
           if (forestTiles.length > 0) {
             const tile = forestTiles[Math.floor(Math.random() * forestTiles.length)];
-            const key = `${tile.x},${tile.z}`;
-            world.naturalFires.set(key, { endTime: time.gameTime + 28 + Math.random() * 18 });
-            wr.addFireLight(tile.x, tile.z);
+            weather.lightningFlash = { x: tile.x, z: tile.z, timer: 0.3 };
+            // Ignite via FireSystem (which also syncs world.naturalFires)
+            if (fireSystem.ignite(tile.x, tile.z, world, time.gameTime)) {
+              wr.addFireLight(tile.x, tile.z);
+            } else {
+              // Already burning — just add visual flash
+              const key = `\${tile.x},\${tile.z}`;
+              if (!world.naturalFires.has(key)) {
+                world.naturalFires.set(key, { endTime: time.gameTime + 28 + Math.random() * 18 });
+                wr.addFireLight(tile.x, tile.z);
+              }
+            }
             wr.addFlash(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.z * TILE_SIZE + TILE_SIZE / 2, 0xffcc44);
             showNotification('Lightning strikes the forest!', 'env');
           }
@@ -964,7 +1022,7 @@ async function init() {
         if (agent?.health > 0) {
           try {
             const wMult = weather.energyDrainMultAt(agent.x, agent.z);
-            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season);
+            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, null, time);
           } catch (e) {
             console.error('[World] Agent tick failed', agent?.id, e);
           }
@@ -1017,6 +1075,19 @@ async function init() {
 
         const child = new Agent(bx, bz);
         ConflictSystem.assignFaction(child);
+
+        // Family tracking (CAD-186): wire up parent/child relationships
+        if (evt.parentAId != null) {
+          child.parents.push(evt.parentAId);
+          const parentA = agents.find(a => a.id === evt.parentAId);
+          if (parentA) parentA.children.push(child.id);
+        }
+        if (evt.parentBId != null) {
+          child.parents.push(evt.parentBId);
+          const parentB = agents.find(a => a.id === evt.parentBId);
+          if (parentB) parentB.children.push(child.id);
+        }
+
         agents.push(child);
         ar.addAgent(child);
         birthGameTimes.push(time.gameTime);
@@ -1029,6 +1100,13 @@ async function init() {
       if (disasterSystem.active && disasterSystem.active._justActivated) {
         showNotification(`Disaster: ${disasterSystem.active.type}`, 'env');
       }
+
+      // ── FireSystem tick ─────────────────────────────────────────────────
+      fireSystem.tick(delta, world, time.gameTime, wr);
+      world.fireTiles = fireSystem.getFireTiles();
+
+      // ── EcologySystem tick ──────────────────────────────────────────────
+      ecologySystem.tick(time.day, world);
 
       // ── ConflictSystem cooldown tick ────────────────────────────────────
       ConflictSystem.updateCooldowns(agents, delta);
@@ -1132,4 +1210,5 @@ async function init() {
 }
 
 init().catch(e => showError('Init failed', e));
+
 
