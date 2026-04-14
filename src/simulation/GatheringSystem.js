@@ -188,4 +188,24 @@ export class GatheringSystem {
 
     return false;
   }
+
+  /**
+   * Craft medicine from herbs. Requires herbalism knowledge.
+   * 3 herbs → 1 medicine per call. Returns true if crafting happened.
+   * @param {object} agent - The crafting agent
+   * @param {Map<string,object>} itemDefs - Item definitions keyed by id
+   * @returns {boolean} true if medicine was crafted
+   */
+  static craftMedicine(agent, itemDefs) {
+    if (!agent.knowledge.has('herbalism')) return false;
+    if (!agent.inventory.has('herbs')) return false;
+
+    const herbStack = agent.inventory.stacks.find(s => s.itemId === 'herbs');
+    if (!herbStack || herbStack.quantity < 3) return false;
+
+    agent.inventory.remove('herbs', 3);
+    agent.inventory.add('medicine', 1, itemDefs);
+    return true;
+  }
 }
+
