@@ -1,4 +1,5 @@
 import { TileItems } from './TileItems.js';
+import { SpatialGrid } from './SpatialGrid.js';
 
 export const TILE_SIZE = 2;
 export const WORLD_WIDTH = 32;
@@ -33,6 +34,8 @@ export class World {
     this.tileItems = new TileItems();
     /** Active predators in the world */
     this.predators = [];
+    /** Spatial index for fast agent proximity queries */
+    this.spatialGrid = new SpatialGrid(WORLD_WIDTH, WORLD_HEIGHT, 4);
   }
 
   /**
@@ -145,6 +148,16 @@ export class World {
     const predator = { type, x: spawnPoints[0].x, z: spawnPoints[0].z, health: 1.0, huntCooldown: 0, targetX: spawnPoints[0].x, targetZ: spawnPoints[0].z, wanderTimer: Math.random() * 3 };
     this.predators.push(predator);
     return predator;
+  }
+
+  /** Clear and rebuild the spatial grid with current agent positions. */
+  updateSpatialGrid(agents) {
+    this.spatialGrid.clear();
+    for (const agent of agents) {
+      if (agent.health > 0 && !agent.isDead) {
+        this.spatialGrid.insert(agent);
+      }
+    }
   }
 
   // ── Procedural generation ─────────────────────────────────────────────
