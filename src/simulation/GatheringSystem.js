@@ -60,9 +60,12 @@ export class GatheringSystem {
       // Resource availability scales yield
       const resourceMult = Math.max(0.2, tile.resource);
 
+      // Water adjacency bonus for fishing
+      const waterMult = activity.name === 'fishing' ? GatheringSystem.waterAdjacencyBonus(tile, world) : 1.0;
+
       // Calculate yield
       const rawYield = minYield + Math.random() * (maxYield - minYield);
-      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult));
+      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult * waterMult));
 
       if (finalYield > 0) {
         results.push({ itemId: itemDef.id, quantity: finalYield });
@@ -122,6 +125,20 @@ export class GatheringSystem {
     activities.sort((a, b) => b.foodItems.length - a.foodItems.length);
 
     return activities;
+  }
+
+  /**
+   * Returns a yield multiplier for water-adjacent tiles.
+   * Coastal/water-adjacent GRASS or BEACH tiles get a 1.4x fishing bonus.
+   * @param {object} tile - The tile being gathered from
+   * @param {object} world - The world (for adjacency checks)
+   * @returns {number} multiplier (1.0 or 1.4)
+   */
+  static waterAdjacencyBonus(tile, world) {
+    if (tile.type !== 'GRASS' && tile.type !== 'BEACH') return 1.0;
+    const hasWater = world.hasAdjacentType(tile.x, tile.z, 'WATER') ||
+                     world.hasAdjacentType(tile.x, tile.z, 'DEEP_WATER');
+    return hasWater ? 1.4 : 1.0;
   }
 
   /**
