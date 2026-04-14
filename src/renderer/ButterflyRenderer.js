@@ -143,7 +143,7 @@ export class ButterflyRenderer {
         wx,
         wz,
         phase:       Math.random() * Math.PI * 2,
-        flapSpeed:   10 + Math.random() * 6,       // 10 – 16 rad/s (desync)
+        flapSpeed:   18 + Math.random() * 10,       // 18 – 28 rad/s (desync)
         wanderPhase: Math.random() * Math.PI * 2,
         targetWx:    wx + (Math.random() - 0.5) * 14,
         targetWz:    wz + (Math.random() - 0.5) * 14,
@@ -180,10 +180,10 @@ export class ButterflyRenderer {
       // Hindwings: lag ~0.31 rad behind forewings (~18° / a few milliseconds)
       const flapHind = easedFlap(e.phase - 0.31);
 
-      e.foreWings.rotation.y = flapFore * 0.85;
+      e.foreWings.rotation.y = flapFore * 1.1;
       e.foreWings.scale.y    = 0.90 + Math.abs(flapFore) * 0.18;
 
-      e.hindWings.rotation.y = flapHind * 0.70; // hindwings open slightly less
+      e.hindWings.rotation.y = flapHind * 0.90; // hindwings open slightly less
       e.hindWings.scale.y    = 0.90 + Math.abs(flapHind) * 0.15;
 
       // ── 2. Body tilt — rocks opposite to the wing stroke ────────────────────
