@@ -100,6 +100,10 @@ export class Agent {
 
     /** Cause of death: 'starvation', 'old_age', or null if alive */
     this.deathCause = null;
+
+    /** Family relationships */
+    this.parents  = []; // array of agent IDs
+    this.children = []; // array of agent IDs
   }
 
   static get TASKS() {
@@ -203,9 +207,11 @@ export class Agent {
 
   // ── Main tick ─────────────────────────────────────────────────────────
 
-  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null, season = null, spatialGrid = null) {
+  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null, season = null, spatialGrid = null, timeSystem = null) {
     // Store spatial grid for use in proximity checks this tick
     this._spatialGrid = spatialGrid;
+    // Store timeSystem for use in _decideAction
+    this._timeSystem = timeSystem;
     this.age += delta;
 
     // Starvation: track time at zero hunger, die after 15 game-sec
@@ -322,6 +328,8 @@ export class Agent {
       if (this.knowledge.has('church'))    sleepMult *= 1.04;
       const taskRestBonus = this.task && Agent.TASKS[this.task]?.restBonus ? Agent.TASKS[this.task].restBonus : 1.0;
       sleepMult *= taskRestBonus;
+      // Nighttime sleeping recovers energy faster
+      if (this._nightSleeping) sleepMult *= 1.5;
       this.needs.energy = Math.min(1, this.needs.energy + ENERGY_RECOVER * delta * 1.4 * sleepMult);
       this.restTimer -= delta;
       if (this.restTimer <= 0) {
@@ -365,7 +373,7 @@ export class Agent {
     if (this._needsCheckTimer <= 0) {
       this._needsCheckTimer = 3 + Math.random() * 4;
       if (this.state === AgentState.WANDERING || this.state === AgentState.DISCOVERING) {
-        this._decideAction(world, allAgents, conceptGraph);
+        this._decideAction(world, allAgents, conceptGraph, this._timeSystem);
       }
     }
 
@@ -458,10 +466,10 @@ export class Agent {
       this._pickUpGroundItems(world, itemDefs);
     }
 
-    this._decideAction(world, allAgents, conceptGraph);
+    this._decideAction(world, allAgents, conceptGraph, this._timeSystem);
   }
 
-  _decideAction(world, allAgents = [], conceptGraph = null) {
+  _decideAction(world, allAgents = [], conceptGraph = null, timeSystem = null) {
     const taskDef = this.task ? Agent.TASKS[this.task] : null;
     const gatherThreshold = taskDef?.gatherThreshold ?? 0.25;
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
@@ -470,6 +478,55 @@ export class Agent {
     // Low health — use medicine from inventory if available
     if (this.health < 0.40 && this._itemDefs) {
       this._useMedicine(this._itemDefs);
+    }
+
+    // ── Time-of-day behaviour ────────────────────────────────────────────
+    if (timeSystem) {
+      const nighttime = this.isNighttime(timeSystem);
+      const dawn      = this.isDawnTime(timeSystem);
+      const dusk      = this.isDuskTime(timeSystem);
+
+      if (nighttime) {
+        // At night agents strongly prefer sleeping/resting.
+        // If energy is not nearly full, go to sleep.
+        if (this.needs.energy < 0.9) {
+          this.state = AgentState.SLEEPING;
+          // Longer rest timer at night
+          this.restTimer = 14 + Math.random() * 10;
+          // Night sleeping recovers energy faster
+          this._nightSleeping = true;
+          return;
+        }
+      } else {
+        this._nightSleeping = false;
+      }
+
+      if (dawn) {
+        // At dawn, prioritise food/foraging even if not critically hungry
+        if (this.needs.hunger < 0.75) {
+          this.state = AgentState.GATHERING;
+          this._pickGatherTarget(world);
+          return;
+        }
+      }
+
+      if (dusk) {
+        // At dusk, head toward shelter if known, or a safe tile to rest soon
+        if (this.knowledge.has('shelter') || this.knowledge.has('housing')) {
+          // Bias wander toward staying close to current position (settle down)
+          if (this.state !== AgentState.SLEEPING) {
+            this.state = AgentState.WANDERING;
+            // Target a nearby tile — stay close to home
+            const tx = Math.floor(this.x) + Math.round((Math.random() - 0.5) * 2);
+            const tz = Math.floor(this.z) + Math.round((Math.random() - 0.5) * 2);
+            if (world.canTraverse(tx, tz, this.knowledge)) {
+              this.targetX = tx + 0.5;
+              this.targetZ = tz + 0.5;
+              return;
+            }
+          }
+        }
+      }
     }
 
     // Critical hunger — eat from inventory first, then seek food
@@ -695,7 +752,7 @@ export class Agent {
     // Child spawns between parents, slightly randomised
     const cx = (this.x + other.x) / 2 + (Math.random() - 0.5) * 1.5;
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
-    conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name });
+    conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name, parentAId: this.id, parentBId: other.id });
   }
 
   // ── Disease spreading ──────────────────────────────────────────────────
@@ -785,6 +842,48 @@ export class Agent {
       world.tileItems.add(tx, tz, itemId, quantity);
     }
   }
+
+  /**
+   * Returns true if the given timeSystem indicates it is night (20:00–06:00),
+   * false otherwise. Accepts either a TimeSystem instance (with .hour getter)
+   * or a raw hour number.
+   */
+  isNighttime(timeSystem) {
+    const h = typeof timeSystem === 'number' ? timeSystem : timeSystem.hour;
+    return h >= 20 || h < 6;
+  }
+
+  /**
+   * Returns true if the given timeSystem indicates it is dawn (06:00–08:00).
+   */
+  isDawnTime(timeSystem) {
+    const h = typeof timeSystem === 'number' ? timeSystem : timeSystem.hour;
+    return h >= 6 && h < 8;
+  }
+
+  /**
+   * Returns true if the given timeSystem indicates it is dusk (18:00–20:00).
+   */
+  isDuskTime(timeSystem) {
+    const h = typeof timeSystem === 'number' ? timeSystem : timeSystem.hour;
+    return h >= 18 && h < 20;
+  }
+
+  /**
+   * Returns an object with { parents: Agent[], children: Agent[], siblings: Agent[] }
+   * resolved from the provided allAgents array.
+   */
+  getFamily(allAgents) {
+    const byId = new Map(allAgents.map(a => [a.id, a]));
+    const parents  = this.parents.map(id => byId.get(id)).filter(Boolean);
+    const children = this.children.map(id => byId.get(id)).filter(Boolean);
+    // Siblings share at least one parent ID with this agent
+    const parentSet = new Set(this.parents);
+    const siblings  = allAgents.filter(a =>
+      a !== this && a.parents.some(pid => parentSet.has(pid))
+    );
+    return { parents, children, siblings };
+  }
 }
 
 // ── Name generator ────────────────────────────────────────────────────────
@@ -798,3 +897,4 @@ function randomName() {
   }
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
+
