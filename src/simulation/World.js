@@ -147,7 +147,8 @@ export class World {
         }[type];
         const elev = baseElev + (Math.sin(x * 3.7 + z * 2.3 + this.seed) * 0.5 + 0.5) * 0.06;
 
-        tiles[z][x] = { type, x, z, elevation: elev, resource: 1.0 };
+        const gatherable = type === TileType.GRASS || type === TileType.WOODLAND || type === TileType.FOREST;
+        tiles[z][x] = { type, x, z, elevation: elev, resource: 1.0, depletionLevel: gatherable ? 0.0 : undefined };
       }
     }
 
@@ -304,6 +305,23 @@ export class World {
         // flint does not regenerate
       }
     }
+  }
+
+  /** Tick depletion recovery on all tiles. Depletion recovers at 0.002 per game-second. */
+  updateDepletion(delta) {
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        if (tile.depletionLevel !== undefined && tile.depletionLevel > 0) {
+          tile.depletionLevel = Math.max(0, tile.depletionLevel - 0.002 * delta);
+        }
+      }
+    }
+  }
+
+  /** True when a tile's depletion exceeds the exhaustion threshold. */
+  static isDepleted(tile) {
+    return tile.depletionLevel !== undefined && tile.depletionLevel > 0.7;
   }
 
   /** Returns a list of walkable spawn positions (tile centres) */
