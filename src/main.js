@@ -1104,6 +1104,21 @@ async function init() {
         }
       }
 
+      // CAD-162: heatmap sampling (once per real second)
+      const _nowSec = Math.floor(performance.now() / 1000);
+      if (_nowSec !== _heatmapLastSecond) {
+        _heatmapLastSecond = _nowSec;
+        for (const agent of agents) {
+          if (agent.health <= 0) continue;
+          const hk = Math.round(agent.x) + ',' + Math.round(agent.z);
+          heatmap[hk] = (heatmap[hk] ?? 0) + 1;
+        }
+        for (const k of Object.keys(heatmap)) {
+          heatmap[k] *= 0.999;
+          if (heatmap[k] < 0.01) delete heatmap[k];
+        }
+      }
+
       for (const agent of agents) {
         if (agent?.health > 0) {
           try {
@@ -1654,6 +1669,7 @@ async function init() {
     if (popGraphVisible) drawPopGraph();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
     if (resourceOverlayVisible) drawResourceOverlay();
+    if (heatmapOverlayVisible) drawHeatmapOverlay();
   }
 
 
@@ -1756,6 +1772,57 @@ async function init() {
     if (!resourceOverlayVisible) {
       const ctx = resourceOverlayCanvas.getContext('2d');
       ctx.clearRect(0, 0, resourceOverlayCanvas.width, resourceOverlayCanvas.height);
+    }
+  });
+
+
+  // ── CAD-162: Heatmap overlay ──────────────────────────────────────────
+  let heatmapOverlayVisible = false;
+  const heatmapOverlayCanvas = document.getElementById('heatmap-overlay');
+  const heatmapOverlayBtn    = document.getElementById('heatmap-overlay-btn');
+
+  function drawHeatmapOverlay() {
+    if (!heatmapOverlayCanvas || !heatmapOverlayVisible) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    heatmapOverlayCanvas.width  = W;
+    heatmapOverlayCanvas.height = H;
+    const ctx = heatmapOverlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    const entries = Object.entries(heatmap);
+    if (entries.length === 0) return;
+    const maxVal = Math.max(...entries.map(([, v]) => v), 1);
+    for (const [key, val] of entries) {
+      const [tx, tz] = key.split(',').map(Number);
+      const wx = tx * TILE_SIZE;
+      const wz = tz * TILE_SIZE;
+      const vec = new THREE.Vector3(wx, 0, wz);
+      vec.project(wr.camera);
+      if (vec.z > 1 || vec.z < -1) continue;
+      const sx = (vec.x *  0.5 + 0.5) * W;
+      const sy = (vec.y * -0.5 + 0.5) * H;
+      const t = val / maxVal;
+      const r = Math.round(255 * Math.min(1, t * 2));
+      const g = Math.round(255 * Math.max(0, 1 - t * 2));
+      const a = (0.1 + t * 0.5).toFixed(2);
+      const edgeVec = new THREE.Vector3(wx + TILE_SIZE, 0, wz);
+      edgeVec.project(wr.camera);
+      const ex = (edgeVec.x * 0.5 + 0.5) * W;
+      const radius = Math.max(3, Math.abs(ex - sx));
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(' + r + ',' + g + ',0,' + a + ')';
+      ctx.fill();
+    }
+  }
+
+  if (heatmapOverlayBtn) heatmapOverlayBtn.addEventListener('click', () => {
+    heatmapOverlayVisible = !heatmapOverlayVisible;
+    heatmapOverlayCanvas.style.display = heatmapOverlayVisible ? 'block' : 'none';
+    heatmapOverlayBtn.style.background = heatmapOverlayVisible ? 'rgba(255,100,40,0.3)' : 'rgba(255,255,255,0.1)';
+    if (!heatmapOverlayVisible) {
+      const ctx = heatmapOverlayCanvas.getContext('2d');
+      ctx.clearRect(0, 0, heatmapOverlayCanvas.width, heatmapOverlayCanvas.height);
     }
   });
 
