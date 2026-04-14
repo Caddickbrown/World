@@ -3,15 +3,23 @@
     "id": "berries",
     "name": "Berries",
     "category": "food",
-    "icon": "🫐",
+    "icon": "\ud83e\uded0",
     "weight": 0.2,
     "stackSize": 10,
-    "effects": { "hunger": 0.12 },
+    "effects": {
+      "hunger": 0.12
+    },
     "spoilRate": 0.008,
     "gatherSource": {
-      "tileTypes": ["GRASS", "FOREST"],
+      "tileTypes": [
+        "GRASS",
+        "FOREST"
+      ],
       "activity": "foraging",
-      "baseYield": [1, 3],
+      "baseYield": [
+        1,
+        3
+      ],
       "knowledge": []
     }
   },
@@ -19,86 +27,124 @@
     "id": "fish",
     "name": "Fish",
     "category": "food",
-    "icon": "🐟",
+    "icon": "\ud83d\udc1f",
     "weight": 0.5,
     "stackSize": 5,
-    "effects": { "hunger": 0.20 },
+    "effects": {
+      "hunger": 0.2
+    },
     "spoilRate": 0.012,
     "cookable": true,
     "cookedId": "cooked_fish",
     "gatherSource": {
-      "tileTypes": ["GRASS", "FOREST"],
+      "tileTypes": [
+        "GRASS",
+        "FOREST"
+      ],
       "adjacentTo": "WATER",
       "activity": "fishing",
-      "baseYield": [1, 2],
-      "knowledge": ["fishing"]
+      "baseYield": [
+        1,
+        2
+      ],
+      "knowledge": [
+        "fishing"
+      ]
     }
   },
   {
     "id": "cooked_fish",
     "name": "Cooked Fish",
     "category": "food",
-    "icon": "🍳",
+    "icon": "\ud83c\udf56",
     "weight": 0.5,
     "stackSize": 5,
-    "effects": { "hunger": 0.35 },
-    "spoilRate": 0.005
+    "effects": {
+      "hunger": 0.35
+    },
+    "spoilRate": 0.003
   },
   {
     "id": "meat",
     "name": "Raw Meat",
     "category": "food",
-    "icon": "🥩",
+    "icon": "\ud83e\udd69",
     "weight": 0.8,
     "stackSize": 5,
-    "effects": { "hunger": 0.18 },
+    "effects": {
+      "hunger": 0.18
+    },
     "spoilRate": 0.015,
     "cookable": true,
     "cookedId": "cooked_meat",
     "gatherSource": {
-      "tileTypes": ["FOREST"],
+      "tileTypes": [
+        "FOREST"
+      ],
       "activity": "hunting",
-      "baseYield": [1, 2],
-      "knowledge": ["hunting"]
+      "baseYield": [
+        1,
+        2
+      ],
+      "knowledge": [
+        "hunting"
+      ]
     }
   },
   {
     "id": "cooked_meat",
     "name": "Cooked Meat",
     "category": "food",
-    "icon": "🍖",
-    "weight": 0.8,
+    "icon": "\ud83e\udd69",
+    "weight": 0.6,
     "stackSize": 5,
-    "effects": { "hunger": 0.40 },
-    "spoilRate": 0.004
+    "effects": {
+      "hunger": 0.4
+    },
+    "spoilRate": 0.003
   },
   {
     "id": "herbs",
     "name": "Herbs",
     "category": "food",
-    "icon": "🌿",
+    "icon": "\ud83c\udf3f",
     "weight": 0.1,
     "stackSize": 10,
-    "effects": { "hunger": 0.05, "health": 0.02 },
+    "effects": {
+      "hunger": 0.05,
+      "health": 0.02
+    },
     "spoilRate": 0.006,
     "gatherSource": {
-      "tileTypes": ["FOREST"],
+      "tileTypes": [
+        "FOREST"
+      ],
       "activity": "foraging",
-      "baseYield": [0, 2],
-      "knowledge": ["medicine"]
+      "baseYield": [
+        0,
+        2
+      ],
+      "knowledge": [
+        "medicine"
+      ]
     }
   },
   {
     "id": "wood",
     "name": "Wood",
     "category": "material",
-    "icon": "🪵",
+    "icon": "\ud83e\udeb5",
     "weight": 1.5,
     "stackSize": 5,
     "gatherSource": {
-      "tileTypes": ["FOREST"],
+      "tileTypes": [
+        "FOREST"
+      ],
       "activity": "woodcutting",
-      "baseYield": [1, 2],
+      "baseYield": [
+        1,
+        2
+      ],
       "knowledge": []
     }
   },
@@ -106,13 +152,18 @@
     "id": "stone",
     "name": "Stone",
     "category": "material",
-    "icon": "🪨",
+    "icon": "\ud83e\udea8",
     "weight": 2.0,
     "stackSize": 5,
     "gatherSource": {
-      "tileTypes": ["STONE"],
+      "tileTypes": [
+        "STONE"
+      ],
       "activity": "mining",
-      "baseYield": [1, 2],
+      "baseYield": [
+        1,
+        2
+      ],
       "knowledge": []
     }
   },
@@ -120,28 +171,43 @@
     "id": "hide",
     "name": "Hide",
     "category": "material",
-    "icon": "🟫",
+    "icon": "\ud83d\udfeb",
     "weight": 1.0,
     "stackSize": 5,
     "gatherSource": {
-      "tileTypes": ["FOREST"],
+      "tileTypes": [
+        "FOREST"
+      ],
       "activity": "hunting",
-      "baseYield": [0, 1],
-      "knowledge": ["hunting"]
+      "baseYield": [
+        0,
+        1
+      ],
+      "knowledge": [
+        "hunting"
+      ]
     }
   },
   {
     "id": "ore",
     "name": "Ore",
     "category": "material",
-    "icon": "⛏️",
+    "icon": "\u26cf\ufe0f",
     "weight": 2.5,
     "stackSize": 3,
     "gatherSource": {
-      "tileTypes": ["STONE", "MOUNTAIN"],
+      "tileTypes": [
+        "STONE",
+        "MOUNTAIN"
+      ],
       "activity": "mining",
-      "baseYield": [0, 1],
-      "knowledge": ["metal_tools"]
+      "baseYield": [
+        0,
+        1
+      ],
+      "knowledge": [
+        "metal_tools"
+      ]
     }
   }
 ]
