@@ -26,14 +26,6 @@ import { Achievements }      from './systems/Achievements.js';
 import { LineageTracker }    from './systems/LineageTracker.js';
 import { CraftingSystem }    from './systems/CraftingSystem.js';
 import { SettlementSystem }  from './systems/SettlementSystem.js';
-import { FireSystem }        from './systems/FireSystem.js';
-import { EcologySystem }     from './systems/EcologySystem.js';
-import { Fox }               from './simulation/Fox.js';
-import { FoxRenderer }       from './renderer/FoxRenderer.js';
-import { Deer }              from './simulation/Deer.js';
-import { DeerRenderer }      from './renderer/DeerRenderer.js';
-import { BirdFlockRenderer } from './renderer/BirdFlockRenderer.js';
-import { PopulationManager } from './simulation/PopulationManager.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -103,11 +95,6 @@ async function init() {
   let sheepRenderer;
   let highlandCowRenderer;
   let flowerRenderer;
-  let foxes = [];
-  let foxRenderer;
-  let deer = [];
-  let deerRenderer;
-  let birdFlockRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -129,23 +116,15 @@ async function init() {
   butterflyRenderer = new ButterflyRenderer(wr.scene, world);
   beeRenderer       = new BeeRenderer(wr.scene, world);
   flowerRenderer    = new FlowerRenderer(wr.scene, world);
-  foxes = world.getWildHorseSpawnPoints(6).map(p => new Fox(p.x, p.z));
-  foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
-  deer = world.getWildHorseSpawnPoints(5).map(p => new Deer(p.x, p.z));
-  deerRenderer      = new DeerRenderer(wr.scene, deer, world);
-  birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
   time = new TimeSystem();
   weather = new WeatherSystem(world.width, world.height);
 
   // ── Simulation systems ─────────────────────────────────────────────────
   const disasterSystem   = new DisasterSystem();
-  const fireSystem       = new FireSystem();
-  const ecologySystem    = new EcologySystem();
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
-  const populationManager = new PopulationManager(world);
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -176,25 +155,11 @@ async function init() {
   let gameOver = false;
   let gameOverAutoResetId = null;
 
-  // ── Follow mode (CAD-156) ───────────────────────────────────────────────
-  let followTarget = null;
-
-  function setFollowTarget(agent) {
-    followTarget = agent || null;
-    const btn = document.getElementById('follow-btn');
-    if (btn) btn.classList.toggle('active', !!followTarget);
-  }
-
-  // Escape cancels follow mode
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') setFollowTarget(null);
-  });
 
   document.getElementById('info-close').addEventListener('click', () => {
     if (selectedAgent) selectedAgent.selected = false;
     selectedAgent = null;
     selectedTile  = null;
-    setFollowTarget(null);
     document.getElementById('info-panel').classList.add('hidden');
   });
 
@@ -261,14 +226,10 @@ async function init() {
     butterflyRenderer?.dispose();
     beeRenderer?.dispose();
     flowerRenderer?.dispose();
-    foxRenderer?.dispose();
-    deerRenderer?.dispose();
-    birdFlockRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
     lightningCooldown = 0;
-    fireSystem.clear();
     conceptGraph = new ConceptGraph(conceptsData);
     agents.length = 0;
     const startPop = Number(popSlider.value);
@@ -286,13 +247,6 @@ async function init() {
     butterflyRenderer = new ButterflyRenderer(wr.scene, world);
     beeRenderer       = new BeeRenderer(wr.scene, world);
     flowerRenderer    = new FlowerRenderer(wr.scene, world);
-    foxes.length = 0;
-    world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
-    foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
-    deer.length = 0;
-    world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
-    deerRenderer      = new DeerRenderer(wr.scene, deer, world);
-    birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -349,7 +303,6 @@ async function init() {
         world = new World(val);
         world.naturalFires = new Map();
         lightningCooldown = 0;
-        fireSystem.clear();
         conceptGraph = new ConceptGraph(conceptsData);
         agents.length = 0;
         const startPop = Number(popSlider.value);
@@ -367,13 +320,6 @@ async function init() {
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
-        foxes.length = 0;
-        world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
-        foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
-        deer.length = 0;
-        world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
-        deerRenderer      = new DeerRenderer(wr.scene, deer, world);
-        birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -430,14 +376,10 @@ async function init() {
         butterflyRenderer?.dispose();
         beeRenderer?.dispose();
         flowerRenderer?.dispose();
-        foxRenderer?.dispose();
-        deerRenderer?.dispose();
-        birdFlockRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
         lightningCooldown = 0;
-        fireSystem.clear();
         conceptGraph = new ConceptGraph(conceptsData);
         if (saveData.conceptGraph && conceptGraph.deserialize) {
           conceptGraph.deserialize(saveData.conceptGraph);
@@ -465,13 +407,6 @@ async function init() {
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
-        foxes.length = 0;
-        world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
-        foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
-        deer.length = 0;
-        world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
-        deerRenderer      = new DeerRenderer(wr.scene, deer, world);
-        birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -727,6 +662,34 @@ async function init() {
     }
   });
 
+  // ── Stats panel update (CAD-155) ──────────────────────────────────────
+  function getEraFromConcepts(discovered) {
+    const n = discovered.length;
+    if (n === 0)  return 'Stone Age';
+    if (n < 5)    return 'Early Stone Age';
+    if (n < 10)   return 'Late Stone Age';
+    if (n < 16)   return 'Bronze Age';
+    if (n < 22)   return 'Iron Age';
+    if (n < 30)   return 'Classical Age';
+    return 'Advanced Age';
+  }
+
+  function updateStatsPanel(alive, discovered) {
+    const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    set('sp-population', alive);
+    set('sp-era', getEraFromConcepts(discovered));
+    set('sp-day', 'Day ' + time.day);
+    const tod = time.timeOfDay;
+    const todHours = tod * 24;
+    const hh = Math.floor(todHours).toString().padStart(2, '0');
+    const mm = Math.floor((todHours % 1) * 60).toString().padStart(2, '0');
+    set('sp-time', hh + ':' + mm);
+    set('sp-weather', weather.label);
+    set('sp-settlements', settlementSystem.settlements.length);
+  }
+
+
+
   // ── HUD update (throttled) ─────────────────────────────────────────────
   let lastHudUpdate = 0;
   const birthGameTimes = []; // gameTime when each birth occurred
@@ -821,6 +784,8 @@ async function init() {
     } else if (selectedTile && world.getTile(selectedTile.x, selectedTile.z)) {
       updateTileInfoPanel(world.getTile(selectedTile.x, selectedTile.z));
     }
+
+    updateStatsPanel(alive, discovered);
     } catch (e) {
       console.error('[World] HUD update failed', e);
     }
@@ -893,19 +858,6 @@ async function init() {
       return c ? `<span class="info-tag">${c.icon ?? ''} ${c.name}</span>` : '';
     }).join('');
 
-    // Family info (CAD-186)
-    const family = agent.getFamily ? agent.getFamily(agents) : { parents: [], children: [] };
-    const familyHtml = (() => {
-      let html = '';
-      if (family.parents.length > 0) {
-        html += `<div class="info-row"><span class="info-label">Parents</span><span style="font-size:11px;opacity:.7">${family.parents.map(a => a.name).join(', ')}</span></div>`;
-      }
-      if (family.children.length > 0) {
-        html += `<div class="info-row"><span class="info-label">Children</span><span style="font-size:11px;opacity:.7">${family.children.map(a => a.name).join(', ')}</span></div>`;
-      }
-      return html;
-    })();
-
     document.getElementById('info-content').innerHTML = `
       <div class="info-name">${agent.name}</div>
       <div class="info-state">${(agent.state || 'wandering').charAt(0).toUpperCase() + (agent.state || 'wandering').slice(1)}</div>
@@ -927,7 +879,6 @@ async function init() {
           <span style="font-size:11px;opacity:.5">${(agent.curiosity * 100).toFixed(0)}%</span>
         </div>
         ${agent.task ? `<div class="info-row"><span class="info-label">Task</span><span class="info-tag">${Agent.TASKS[agent.task]?.icon ?? '•'} ${Agent.TASKS[agent.task]?.name ?? agent.task}</span></div>` : ''}
-        ${familyHtml}
       </div>
       ${agent.inventory.stacks.length > 0 ? `
         <div style="margin-top:8px;font-size:11px;opacity:.7">Inventory (${agent.inventory.currentWeight(itemDefs).toFixed(1)}/${agent.inventory.maxWeight.toFixed(0)})</div>
@@ -937,7 +888,6 @@ async function init() {
         }).join('')}</div>
       ` : ''}
       ${concepts ? `<div class="info-tags">${concepts}</div>` : '<div style="opacity:.3;font-size:12px;margin-top:10px">No discoveries yet</div>'}
-    `;
   }
 
   // ── Notifications (max 3 per type, Environmental vs Social) ───────────
@@ -980,28 +930,17 @@ async function init() {
           showNotification('The skies clear.', 'env');
       }
 
-      // Lightning strikes during storms — handled by WeatherSystem; fire via FireSystem
+      // Lightning strikes during storms — can set forest on fire
       if (weather.current === 'STORM') {
         lightningCooldown -= delta;
         if (lightningCooldown <= 0) {
           lightningCooldown = 35 + Math.random() * 25;
-          // Use WeatherSystem lightning flash state
-          weather.lightningFlash = { x: 0, z: 0, timer: 0.3 }; // placeholder for global flash
           const forestTiles = world.getTilesOfType(TileType.FOREST);
           if (forestTiles.length > 0) {
             const tile = forestTiles[Math.floor(Math.random() * forestTiles.length)];
-            weather.lightningFlash = { x: tile.x, z: tile.z, timer: 0.3 };
-            // Ignite via FireSystem (which also syncs world.naturalFires)
-            if (fireSystem.ignite(tile.x, tile.z, world, time.gameTime)) {
-              wr.addFireLight(tile.x, tile.z);
-            } else {
-              // Already burning — just add visual flash
-              const key = `\${tile.x},\${tile.z}`;
-              if (!world.naturalFires.has(key)) {
-                world.naturalFires.set(key, { endTime: time.gameTime + 28 + Math.random() * 18 });
-                wr.addFireLight(tile.x, tile.z);
-              }
-            }
+            const key = `${tile.x},${tile.z}`;
+            world.naturalFires.set(key, { endTime: time.gameTime + 28 + Math.random() * 18 });
+            wr.addFireLight(tile.x, tile.z);
             wr.addFlash(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.z * TILE_SIZE + TILE_SIZE / 2, 0xffcc44);
             showNotification('Lightning strikes the forest!', 'env');
           }
@@ -1033,12 +972,6 @@ async function init() {
 
       // Tick wild horse simulation
       for (const horse of horses) horse.tick(delta, world, horses);
-
-      // Tick foxes
-      for (const fox of foxes) fox.tick(delta, world, agents);
-
-      // Tick deer
-      for (const d of deer) d.tick(delta, world, agents, predators);
 
       // Tick predators (food chain)
       const sheepArr = sheepRenderer ? sheepRenderer.sheep : [];
@@ -1084,7 +1017,7 @@ async function init() {
               if (taskInfo) showNotification(`${evt.agentName} has taken up the role of ${taskInfo.name}`, 'social');
             }
           }
-          // Flash at agent location
+          // Flash + speech bubble + golden ring at agent location
           const agent = agents.find(a => a.id === evt.agentId);
           if (agent) {
             const wx = agent.x * 2;
@@ -1140,19 +1073,11 @@ async function init() {
         showNotification(`Disaster: ${disasterSystem.active.type}`, 'env');
       }
 
-      // ── FireSystem tick ─────────────────────────────────────────────────
-      fireSystem.tick(delta, world, time.gameTime, wr);
-      world.fireTiles = fireSystem.getFireTiles();
-
-      // ── EcologySystem tick ──────────────────────────────────────────────
-      ecologySystem.tick(time.day, world);
-
       // ── ConflictSystem cooldown tick ────────────────────────────────────
       ConflictSystem.updateCooldowns(agents, delta);
 
       // ── SettlementSystem tick ───────────────────────────────────────────
       settlementSystem.tick(delta, agents, world, time.day);
-      populationManager.tick(delta, sheepRenderer, horseRenderer, predators, world);
       settlementSystem.updateMembership(agents);
       for (const s of settlementSystem.settlements) {
         settlementSystem.nameSettlement(s, agents);
@@ -1228,9 +1153,6 @@ async function init() {
     butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
     beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
     flowerRenderer?.update(delta > 0 ? delta : 0, time.season);
-    foxRenderer?.update();
-    deerRenderer?.update();
-    birdFlockRenderer?.update(delta > 0 ? delta : 0);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
     wr.render();
