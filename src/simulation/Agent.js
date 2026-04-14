@@ -104,6 +104,13 @@ export class Agent {
     /** Family relationships */
     this.parents  = []; // array of agent IDs
     this.children = []; // array of agent IDs
+
+    // CAD-125: Home ownership — building ID or tile coords key
+    this.homeId = null;
+
+    // CAD-185: Bonded pairs — partner agent ID and interaction history
+    this.bondedPartnerId = null;
+    this.socialHistory = {}; // map of agentId -> interaction count
   }
 
   static get TASKS() {
@@ -166,13 +173,13 @@ export class Agent {
     else                   this.lifeStage = 'elder';
   }
 
-  /** Generate offspring personality from two parents */
+  /** Generate offspring personality from two parents (CAD-189: heritable traits) */
   static inheritPersonality(parentA, parentB) {
     const traits = ['curiosity', 'sociability', 'industriousness', 'courage', 'creativity', 'caution'];
     const child = {};
     for (const t of traits) {
       const parentVal = (parentA.personality[t] + parentB.personality[t]) / 2;
-      const mutation = (Math.random() - 0.5) * 0.2;
+      const mutation = (Math.random() - 0.5) * 0.1; // ±5% noise
       child[t] = Math.max(0, Math.min(1, parentVal + mutation));
     }
     return child;
@@ -319,6 +326,19 @@ export class Agent {
 
     // ── Sleeping: recover energy, then resume ────────────────────────────────
     if (this.state === AgentState.SLEEPING) {
+      // CAD-125: Claim a building as home when sleeping in one for the first time
+      if (this.homeId === null && (hasShelter || this.knowledge.has('housing'))) {
+        const bx = Math.floor(this.x);
+        const bz = Math.floor(this.z);
+        const buildingKey = `${bx},${bz}`;
+        if (!world._homeOccupants) world._homeOccupants = {};
+        const occupants = world._homeOccupants[buildingKey] || [];
+        if (occupants.length < 2) {
+          this.homeId = buildingKey;
+          world._homeOccupants[buildingKey] = [...occupants, this.id];
+        }
+      }
+
       let sleepMult = hasShelter ? 1.6 : 1.0;
       if (this.knowledge.has('weaving')) sleepMult *= 1.25;
       if (this.knowledge.has('rope')) sleepMult *= 1.1;
@@ -511,6 +531,21 @@ export class Agent {
       }
 
       if (dusk) {
+        // CAD-125: At dusk, agents with a homeId navigate toward their home building
+        if (this.homeId && this.state !== AgentState.SLEEPING) {
+          const [hx, hz] = this.homeId.split(',').map(Number);
+          if (!isNaN(hx) && !isNaN(hz)) {
+            const dx = hx - this.x;
+            const dz = hz - this.z;
+            const dist = Math.hypot(dx, dz);
+            if (dist > 1.5 && world.canTraverse(Math.floor(hx), Math.floor(hz), this.knowledge)) {
+              this.state = AgentState.WANDERING;
+              this.targetX = hx + 0.5;
+              this.targetZ = hz + 0.5;
+              return;
+            }
+          }
+        }
         // At dusk, head toward shelter if known, or a safe tile to rest soon
         if (this.knowledge.has('shelter') || this.knowledge.has('housing')) {
           // Bias wander toward staying close to current position (settle down)
@@ -612,6 +647,26 @@ export class Agent {
     const taskDef = this.task ? Agent.TASKS[this.task] : null;
     const radiusBonus = taskDef?.wanderRadiusBonus ?? 0;
     let radius = 4 + Math.floor(this.curiosity * 4) + radiusBonus;
+
+    // CAD-185: Bonded agents preferentially wander toward each other
+    if (this.bondedPartnerId !== null && allAgents.length > 0 && Math.random() < 0.4) {
+      const partner = allAgents.find(a => a.id === this.bondedPartnerId && a.health > 0);
+      if (partner) {
+        const dx = partner.x - this.x;
+        const dz = partner.z - this.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 2) {
+          const step = Math.min(radius, dist * 0.7);
+          const tx = Math.floor(this.x + (dx / dist) * step);
+          const tz = Math.floor(this.z + (dz / dist) * step);
+          if (world.canTraverse(tx, tz, this.knowledge)) {
+            this.targetX = tx + 0.5;
+            this.targetZ = tz + 0.5;
+            return;
+          }
+        }
+      }
+    }
 
     // Teacher: bias toward other agents to share knowledge
     // Use SpatialGrid for nearby candidates when available, else fall back to allAgents
@@ -730,8 +785,26 @@ export class Agent {
         conceptGraph.trySpread(this, other, SOCIAL_COOLDOWN);
         // Disease spreading
         this._trySpreadInfection(other);
+        // CAD-185: track social history and potentially bond
+        this._trackSocialAndBond(other);
         if (dist < 3.5) this._tryReproduce(other, conceptGraph);
       }
+    }
+  }
+
+  // CAD-185: Track social interactions and form bonds
+  _trackSocialAndBond(other) {
+    if (!this.isAdult || !other.isAdult) return;
+    if (this.bondedPartnerId !== null || other.bondedPartnerId !== null) return;
+
+    // Increment interaction count for both agents
+    this.socialHistory[other.id] = (this.socialHistory[other.id] || 0) + 1;
+    other.socialHistory[this.id] = (other.socialHistory[this.id] || 0) + 1;
+
+    // 5% bond chance once they've interacted 3+ times
+    if (this.socialHistory[other.id] >= 3 && Math.random() < 0.05) {
+      this.bondedPartnerId = other.id;
+      other.bondedPartnerId = this.id;
     }
   }
 
@@ -743,6 +816,11 @@ export class Agent {
     if (this.needs.hunger < 0.40 || other.needs.hunger < 0.40) return;
     if (this.needs.energy < 0.20 || other.needs.energy < 0.20) return;
 
+    // CAD-185: Bonded pairs have a higher reproduction chance (1.0 base vs 0.15 normally)
+    const isBonded = this.bondedPartnerId === other.id;
+    const reproChance = isBonded ? 1.0 : 0.15;
+    if (Math.random() > reproChance) return;
+
     const baseCooldown = 45 + Math.random() * 45;
     const communityMult = (this.knowledge.has('community') || other.knowledge.has('community')) ? 0.82 : 1.0;
     const cooldown = baseCooldown * communityMult;
@@ -752,7 +830,8 @@ export class Agent {
     // Child spawns between parents, slightly randomised
     const cx = (this.x + other.x) / 2 + (Math.random() - 0.5) * 1.5;
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
-    conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name, parentAId: this.id, parentBId: other.id });
+    // CAD-189: pass parent refs so heritable traits can be applied at birth
+    conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name, parentAId: this.id, parentBId: other.id, parentAPersonality: this.personality, parentBPersonality: other.personality });
   }
 
   // ── Disease spreading ──────────────────────────────────────────────────
