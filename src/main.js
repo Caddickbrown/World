@@ -562,6 +562,8 @@ async function init() {
     if (raycaster.ray.intersectPlane(groundPlane, groundPoint)) {
       dragAgent  = findNearestAgent(groundPoint.x, groundPoint.z);
       isDragging = false;
+      // Suppress OrbitControls when mousedown lands on an agent so map doesn't pan
+      if (dragAgent) wr.controls.enabled = false;
     }
   });
 
@@ -597,9 +599,12 @@ async function init() {
         // Revert to last valid position (targetX/Z before drag started)
         dragAgent.x = dragAgent.targetX; dragAgent.z = dragAgent.targetZ;
       }
+      wr.controls.enabled = true;
       mouseDownAt = null; dragAgent = null; isDragging = false;
       return;
     }
+    // Re-enable controls if we suppressed them on mousedown (agent click, no drag)
+    if (dragAgent) wr.controls.enabled = true;
     dragAgent  = null;
     isDragging = false;
 
@@ -1119,3 +1124,4 @@ async function init() {
 }
 
 init().catch(e => showError('Init failed', e));
+
