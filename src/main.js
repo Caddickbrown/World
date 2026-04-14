@@ -847,6 +847,7 @@ async function init() {
       world.updateChickenNests(delta);
       world.updateCows(delta);
       world.updateGlaciers(delta, weather.temperature ?? 20);
+      world.updateDomestication(delta, buildingRenderer?.buildings ?? []);
 
       // Tick wild horse simulation
       for (const horse of horses) horse.tick(delta, world, horses);
