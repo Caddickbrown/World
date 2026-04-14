@@ -868,7 +868,7 @@ async function init() {
       for (const agent of agents) {
         if (agent?.health > 0) {
           try {
-            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null);
+            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season);
           } catch (e) {
             console.error('[World] Agent tick failed', agent?.id, e);
           }
