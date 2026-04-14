@@ -6,6 +6,9 @@ const RECIPES = new Map([
   ['stone_tool', { id: 'stone_tool', requires: { knowledge: 'stone_tools', items: { stone: 1, wood: 1 } }, output: 'stone_tool', qty: 1 }],
   ['rope',       { id: 'rope',       requires: { knowledge: 'weaving',     items: { plant_fibre: 2 } },    output: 'rope',       qty: 1 }],
   ['campfire',   { id: 'campfire',   requires: { knowledge: 'fire',        items: { wood: 3, stone: 2 } }, output: 'campfire',   qty: 1 }],
+  // CAD-204: plant/food recipes
+  ['flour',      { id: 'flour',      requires: { knowledge: 'agriculture', items: { wild_grain: 3 } },     output: 'flour',      qty: 1 }],
+  ['bread',      { id: 'bread',      requires: { knowledge: 'fire_making', items: { flour: 1 } },          output: 'bread',      qty: 1 }],
 ]);
 
 export class CraftingSystem {
