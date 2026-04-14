@@ -27,7 +27,7 @@ const TILE_COLOR_HSL = {
   [TileType.MOUNTAIN]: [215, 18, 68],
 };
 
-const GAP = 0.08; // gap between tiles
+const GAP = 0.0; // gap between tiles
 
 export class TerrainRenderer {
   constructor(scene, world) {
@@ -211,7 +211,7 @@ export class TerrainRenderer {
         this._applyTransforms(placements, mesh, dummy, ({ tile }, rng) => {
           const sz = 0.75 + rng(5) * 0.55;
           return {
-            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 1.1, SURF + 0.16 * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 1.1],
+            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 2.8, SURF + 0.16 * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 2.8],
             scale: [sz, 0.7 * sz, sz],
           };
         });
@@ -224,7 +224,7 @@ export class TerrainRenderer {
           const sz = 0.75 + rng(5) * 0.55;
           const sc = sz * (0.25 + r * 0.75);
           return {
-            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 1.1, SURF + 0.16 * sc, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 1.1],
+            pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(1) - 0.5) * 2.8, SURF + 0.16 * sc, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(2) - 0.5) * 2.8],
             scale: [sc, 0.7 * sc, sc],
             color: [G[0]*r + B[0]*(1-r), G[1]*r + B[1]*(1-r), G[2]*r + B[2]*(1-r)],
           };
@@ -238,8 +238,8 @@ export class TerrainRenderer {
       const SURF        = TerrainRenderer.surfaceY(TileType.FOREST);
       const forestTiles = buckets[TileType.FOREST].filter(t => this._rng(t.x, t.z) < 0.82);
       if (forestTiles.length > 0) {
-        const deadTiles   = forestTiles.filter(t => this._rng(t.x, t.z, 41) < 0.10);
-        const livingTiles = forestTiles.filter(t => this._rng(t.x, t.z, 41) >= 0.10);
+        const deadTiles   = forestTiles.filter(t => this._rng(t.x, t.z, 41) < 0.04);
+        const livingTiles = forestTiles.filter(t => this._rng(t.x, t.z, 41) >= 0.04);
 
         // Sort living tiles into 6 biome-clustered types
         const typeBuckets = { pine: [], spruce: [], oak: [], birch: [], cherry: [], maple: [] };
@@ -255,15 +255,15 @@ export class TerrainRenderer {
         const TREE_TYPES = [
           { tiles: typeBuckets.pine,
             trunk: { color: 0x5c3d1a, radT: 0.055, radB: 0.095, h0: 0.90, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
-            fol:   { geom: new THREE.ConeGeometry(0.28, 0.90, 6),   color: 0x15803d, h0: 0.85, hVar: 0.40, sx0: 0.75, sxVar: 0.35, centerFrac: 0.45, roundCrown: false },
+            fol:   { geom: new THREE.ConeGeometry(0.38, 0.65, 7),   color: 0x2d9e52, h0: 0.85, hVar: 0.40, sx0: 0.75, sxVar: 0.35, centerFrac: 0.45, roundCrown: false },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.spruce,
             trunk: { color: 0x3d2810, radT: 0.050, radB: 0.088, h0: 1.05, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
-            fol:   { geom: new THREE.ConeGeometry(0.22, 1.05, 7),   color: 0x0d5e28, h0: 0.90, hVar: 0.45, sx0: 0.62, sxVar: 0.28, centerFrac: 0.50, roundCrown: false },
+            fol:   { geom: new THREE.ConeGeometry(0.32, 0.80, 8),   color: 0x1e7a3d, h0: 0.90, hVar: 0.45, sx0: 0.62, sxVar: 0.28, centerFrac: 0.50, roundCrown: false },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.oak,
             trunk: { color: 0x78350f, radT: 0.075, radB: 0.12,  h0: 0.65, hVar: 0.45, hScale: 0.85, topFrac: 0.75 },
-            fol:   { geom: new THREE.SphereGeometry(0.38, 7, 5), color: 0x166534, h0: 0.65, hVar: 0.45, sx0: 0.85, sxVar: 0.70, centerFrac: 0.36, roundCrown: true  },
+            fol:   { geom: new THREE.SphereGeometry(0.38, 7, 5), color: 0x228b45, h0: 0.65, hVar: 0.45, sx0: 0.85, sxVar: 0.70, centerFrac: 0.36, roundCrown: true  },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.birch,
             trunk: { color: 0xc8c0b0, radT: 0.038, radB: 0.060, h0: 0.78, hVar: 0.40, hScale: 0.88, topFrac: 0.70 },
@@ -290,7 +290,7 @@ export class TerrainRenderer {
             dummy, ({ tile }, rng) => {
               const sz = 0.60 + rng(36) * 0.70, tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
               return {
-                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 1.1, SURF + 0.21 * tH * trunk.hScale * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 1.1],
+                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 2.8, SURF + 0.21 * tH * trunk.hScale * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 2.8],
                 scale: [tW * sz, tH * trunk.hScale * sz, tW * sz],
                 rot:   [0, rng(32) * Math.PI * 2, 0],
               };
@@ -311,7 +311,7 @@ export class TerrainRenderer {
             const fSx  = (fol.sx0 + rng(33) * fol.sxVar) * sz;
             const fSz  = fol.roundCrown ? (fol.sx0 + rng(34) * fol.sxVar) * sz : fSx;
             return {
-              pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 1.1, tTop + fol.centerFrac * fH, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 1.1],
+              pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 2.8, tTop + fol.centerFrac * fH, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 2.8],
               scale: [fSx, fH, fSz],
               rot:   [0, rng(32) * Math.PI * 2, 0],
             };
@@ -333,7 +333,7 @@ export class TerrainRenderer {
             dummy, ({ tile }, rng) => {
               const sz = 0.60 + rng(36) * 0.70;
               return {
-                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 0.7, SURF + 0.19 * (0.55 + rng(30) * 0.55) * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 0.7],
+                pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 2.2, SURF + 0.19 * (0.55 + rng(30) * 0.55) * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 2.2],
                 scale: [(0.6 + rng(31) * 0.5) * sz, (0.55 + rng(30) * 0.55) * sz, (0.6 + rng(31) * 0.5) * sz],
                 rot:   [0, rng(32) * Math.PI * 2, 0],
               };
@@ -352,8 +352,8 @@ export class TerrainRenderer {
       const surfY = TerrainRenderer.surfaceY(TileType.STONE);
 
       stoneTiles.forEach((tile, i) => {
-        const ox    = (this._rng(tile.x, tile.z, 6) - 0.5) * 0.8;
-        const oz    = (this._rng(tile.x, tile.z, 7) - 0.5) * 0.8;
+        const ox    = (this._rng(tile.x, tile.z, 6) - 0.5) * 2.2;
+        const oz    = (this._rng(tile.x, tile.z, 7) - 0.5) * 2.2;
         const scale = 0.55 + this._rng(tile.x, tile.z, 8) * 0.9;
         dummy.position.set(
           tile.x * TILE_SIZE + TILE_SIZE / 2 + ox,
@@ -700,60 +700,6 @@ export class TerrainRenderer {
         { mesh: sheepTailMesh, offset: -0.24, tail: true },
         { mesh: sheepEyeLMesh, eyeL: true, fwd: 0.33, spread: 0.08, yOffset: 0.09 },
         { mesh: sheepEyeRMesh, eyeR: true, fwd: 0.33, spread: 0.08, yOffset: 0.09 },
-      ]);
-    }
-
-    // ── Pigs on GRASS tiles ──────────────────────────────────────────────
-    const pigTiles = grassTiles.filter(t => this._rng(t.x, t.z, 40) < 0.025);
-    const pigGrazeConfig = { ...mobileGrazeConfig, label: 'Pig', icon: '🐷', description: 'A stocky pig rooting around the pasture.', moveSpeed: 0.38, wanderRadius: 4 };
-    if (pigTiles.length > 0) {
-      // Barrel body + rounded head + tapered snout + curly tail
-      const pigBodyGeom  = new THREE.CylinderGeometry(0.15, 0.17, 0.22, 8);
-      const pigMat       = new THREE.MeshLambertMaterial({ color: 0xe8b4a0 });
-      const pigMesh      = new THREE.InstancedMesh(pigBodyGeom, pigMat, pigTiles.length);
-      const pigHeadGeom  = new THREE.SphereGeometry(0.1, 6, 5);
-      const pigHeadMat   = new THREE.MeshLambertMaterial({ color: 0xe8b4a0 });
-      const pigHeadMesh  = new THREE.InstancedMesh(pigHeadGeom, pigHeadMat, pigTiles.length);
-      const pigSnoutGeom = new THREE.CylinderGeometry(0.022, 0.045, 0.14, 5);
-      const pigSnoutMat  = new THREE.MeshLambertMaterial({ color: 0xdd9a85 });
-      const pigSnoutMesh = new THREE.InstancedMesh(pigSnoutGeom, pigSnoutMat, pigTiles.length);
-      const pigEarGeom   = new THREE.BoxGeometry(0.1, 0.018, 0.045);
-      const pigEarMat    = new THREE.MeshLambertMaterial({ color: 0xe0ac98 });
-      const pigEarMesh   = new THREE.InstancedMesh(pigEarGeom, pigEarMat, pigTiles.length);
-      const pigTailGeom  = new THREE.TorusGeometry(0.04, 0.018, 4, 6, Math.PI * 1.5);
-      const pigTailMat   = new THREE.MeshLambertMaterial({ color: 0xdd9a85 });
-      const pigTailMesh  = new THREE.InstancedMesh(pigTailGeom, pigTailMat, pigTiles.length);
-      const pigEyeGeom   = new THREE.SphereGeometry(0.022, 5, 4);
-      const pigEyeMat    = new THREE.MeshLambertMaterial({ color: 0x111122 });
-      const pigEyeLMesh  = new THREE.InstancedMesh(pigEyeGeom, pigEyeMat, pigTiles.length);
-      const pigEyeRMesh  = new THREE.InstancedMesh(pigEyeGeom, pigEyeMat, pigTiles.length);
-      const instances = pigTiles.map((tile) => {
-        const ox = (this._rng(tile.x, tile.z, 41) - 0.5) * 0.95;
-        const oz = (this._rng(tile.x, tile.z, 42) - 0.5) * 0.95;
-        const seed = this._rng(tile.x, tile.z, 43) * Math.PI * 2;
-        const tx = tile.x + 0.5 + ox * 0.5;
-        const tz = tile.z + 0.5 + oz * 0.5;
-        return {
-          x: tx, z: tz, targetX: tx, targetZ: tz,
-          homeX: tile.x, homeZ: tile.z,
-          baseY: surfY(TileType.GRASS) + 0.17,
-          scale: [1.1, 0.85, 1.2],
-          headScale: [0.95, 1.05, 0.9],
-          snoutScale: [1, 1, 1],
-          rotY: seed, seed,
-        };
-      });
-      pigMesh.castShadow = true;
-      pigHeadMesh.castShadow = true;
-      pigSnoutMesh.castShadow = true;
-      pigEarMesh.castShadow = true;
-      addAnimated(pigMesh, instances, pigGrazeConfig, [
-        { mesh: pigHeadMesh, offset: 0.22, useHeadScale: true },
-        { mesh: pigSnoutMesh, offset: 0.36, snout: true, useSnoutScale: true },
-        { mesh: pigEarMesh,  offset: 0.2,  ears: true, yOffset: 0.06 },
-        { mesh: pigTailMesh, offset: -0.22, tail: true },
-        { mesh: pigEyeLMesh, eyeL: true, fwd: 0.28, spread: 0.07, yOffset: 0.11 },
-        { mesh: pigEyeRMesh, eyeR: true, fwd: 0.28, spread: 0.07, yOffset: 0.11 },
       ]);
     }
 
