@@ -702,6 +702,22 @@ async function init() {
     set('sp-settlements', settlementSystem.settlements.length);
   }
 
+  // ── Speech bubble (CAD-330) ────────────────────────────────────────────
+  function showSpeechBubble(agent, text) {
+    const worldPos = new THREE.Vector3(agent.x * 2, 2, agent.z * 2);
+    const screenPos = worldPos.clone().project(wr.camera);
+    if (screenPos.z > 1) return;
+    const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
+    const el = document.createElement('div');
+    el.className = 'speech-bubble';
+    el.textContent = text;
+    el.style.left = x + 'px';
+    el.style.top  = (y - 8) + 'px';
+    document.body.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; }, 2600);
+    setTimeout(() => { el.remove(); }, 3000);
+  }
 
 
   // ── HUD update (throttled) ─────────────────────────────────────────────
@@ -1051,7 +1067,8 @@ async function init() {
           if (agent) {
             const wx = agent.x * 2;
             const wz = agent.z * 2;
-            wr.addFlash(wx, wz, 0xff8800);
+            wr.addFlash(wx, wz, 0xffd700);
+            showSpeechBubble(agent, (conceptGraph.concepts.get(evt.conceptId)?.icon ?? '') + ' ' + (conceptGraph.concepts.get(evt.conceptId)?.name ?? evt.conceptId));
           }
         }
         // Spread events are silent (too frequent to notify)
