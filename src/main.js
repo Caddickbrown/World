@@ -264,6 +264,8 @@ async function init() {
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
+    populationHistory.length = 0; _lastPopDay = -1;
+    for (const k of Object.keys(heatmap)) delete heatmap[k];
     weather.current = 'CLEAR';
     weather._timer  = 0;
     gameOver = false;
@@ -341,6 +343,8 @@ async function init() {
 
         time.gameTime = (8 / 24) * 120;
         birthGameTimes.length = 0;
+        populationHistory.length = 0; _lastPopDay = -1;
+        for (const k of Object.keys(heatmap)) delete heatmap[k];
         weather.current = 'CLEAR';
         weather._timer  = 0;
         gameOver = false;
@@ -738,6 +742,14 @@ async function init() {
   let lastHudUpdate = 0;
   const birthGameTimes = []; // gameTime when each birth occurred
 
+  // CAD-158: Population graph history
+  const populationHistory = []; // { day, count }
+  let _lastPopDay = -1;
+
+  // CAD-162: Population heatmap grid
+  const heatmap = {}; // keyed "x,z" -> visit count
+  let _heatmapLastSecond = 0;
+
   function updateHUD() {
     try {
     const now = performance.now();
@@ -746,6 +758,14 @@ async function init() {
 
     const aliveAgents = agents.filter(a => a?.health > 0);
     const alive = aliveAgents.length;
+
+    // CAD-158: record population per day
+    if (time.day !== _lastPopDay) {
+      _lastPopDay = time.day;
+      populationHistory.push({ day: time.day, count: alive });
+      if (populationHistory.length > 200) populationHistory.shift();
+    }
+
     const aliveIds = new Set(aliveAgents.map(a => a.id));
     const hasAgriculture = aliveAgents.some(a => a.knowledge.has('agriculture'));
     const maxPop = Number(maxPopSlider?.value ?? 100);
@@ -779,6 +799,12 @@ async function init() {
     document.getElementById('world-time').textContent    = `${timeIcon} ${hh}:${mm}`;
     document.getElementById('world-weather').textContent = weather.label;
     document.getElementById('world-temp').textContent    = weather.tempLabel;
+
+    // CAD-122: tide indicator
+    const _totalTime = weather._totalTime ?? 0;
+    const _tideLevel = Math.sin((_totalTime / 900) * Math.PI * 2); // ~15 min period
+    const _tideEl = document.getElementById('world-tide');
+    if (_tideEl) _tideEl.textContent = _tideLevel > 0.3 ? '🌊 Tide: High' : _tideLevel < -0.3 ? '🌊 Tide: Low' : '🌊 Tide: Mid';
 
     // ── Game over detection ───────────────────────────────────────────
     if (!gameOver && agents.length > 0 && alive === 0) {
@@ -923,6 +949,15 @@ async function init() {
           <span style="font-size:11px;opacity:.5">${(agent.curiosity * 100).toFixed(0)}%</span>
         </div>
         ${agent.task ? `<div class="info-row"><span class="info-label">Task</span><span class="info-tag">${Agent.TASKS[agent.task]?.icon ?? '•'} ${Agent.TASKS[agent.task]?.name ?? agent.task}</span></div>` : ''}
+        ${agent.homeId ? (() => {
+          const tile = world.getTile(parseInt(agent.homeId), parseInt(agent.homeId.split(',')[1]));
+          const tileType = tile ? (tile.type.charAt(0).toUpperCase() + tile.type.slice(1)) : 'Building';
+          return `<div class="info-row"><span class="info-label">Home</span><span style="font-size:11px;opacity:.5">${tileType} at (${agent.homeId})</span></div>`;
+        })() : ''}
+        ${agent.bondedPartnerId !== null ? (() => {
+          const partner = agents.find(a => a.id === agent.bondedPartnerId);
+          return partner ? `<div class="info-row"><span class="info-label">Bonded to</span><span style="font-size:11px;opacity:.5">💕 ${partner.name}</span></div>` : '';
+        })() : ''}
       </div>
       ${agent.inventory.stacks.length > 0 ? `
         <div style="margin-top:8px;font-size:11px;opacity:.7">Inventory (${agent.inventory.currentWeight(itemDefs).toFixed(1)}/${agent.inventory.maxWeight.toFixed(0)})</div>
@@ -977,6 +1012,10 @@ async function init() {
     lastTimestamp = timestamp;
 
     const delta = time.update(realDelta);
+
+    // CAD-122: track total game time for tide
+    if (!weather._totalTime) weather._totalTime = 0;
+    if (delta > 0) weather._totalTime += delta;
 
     if (delta > 0) {
       // Update weather simulation — notify on significant changes
@@ -1047,6 +1086,22 @@ async function init() {
           }
         }
         world.campfireEvents.length = 0;
+      }
+
+      // CAD-162: heatmap sampling (once per real second)
+      const _nowSec = Math.floor(performance.now() / 1000);
+      if (_nowSec !== _heatmapLastSecond) {
+        _heatmapLastSecond = _nowSec;
+        for (const agent of agents) {
+          if (agent.health <= 0) continue;
+          const hk = Math.round(agent.x) + ',' + Math.round(agent.z);
+          heatmap[hk] = (heatmap[hk] ?? 0) + 1;
+        }
+        // Fade all values
+        for (const k of Object.keys(heatmap)) {
+          heatmap[k] *= 0.999;
+          if (heatmap[k] < 0.01) delete heatmap[k];
+        }
       }
 
       for (const agent of agents) {
@@ -1121,6 +1176,14 @@ async function init() {
           if (parentB) parentB.children.push(child.id);
         }
 
+        // CAD-189: Apply heritable traits from parents with slight mutation
+        if (evt.parentAPersonality && evt.parentBPersonality) {
+          child.personality = Agent.inheritPersonality(
+            { personality: evt.parentAPersonality },
+            { personality: evt.parentBPersonality }
+          );
+        }
+
         agents.push(child);
         ar.addAgent(child);
         birthGameTimes.push(time.gameTime);
@@ -1142,6 +1205,19 @@ async function init() {
       settlementSystem.updateMembership(agents);
       for (const s of settlementSystem.settlements) {
         settlementSystem.nameSettlement(s, agents);
+      }
+      // CAD-181: Sync agent knowledge into settlement pools and teach new joiners
+      settlementSystem.syncKnowledgePools(agents);
+      // Detect newly-joined agents and give them a chance to learn settlement knowledge
+      for (const s of settlementSystem.settlements) {
+        if (!s._prevMemberIds) s._prevMemberIds = new Set(s.memberIds);
+        for (const agentId of s.memberIds) {
+          if (!s._prevMemberIds.has(agentId)) {
+            const joiner = agents.find(a => a.id === agentId);
+            if (joiner) settlementSystem.onAgentJoinsSettlement(joiner, s);
+          }
+        }
+        s._prevMemberIds = new Set(s.memberIds);
       }
 
       // ── Achievements tick ───────────────────────────────────────────────
@@ -1227,12 +1303,278 @@ async function init() {
     minimap.update(agents);
     wr.render();
     updateHUD();
+    updateOverlays();
     } catch (e) {
       const msg = e?.message || e?.toString?.() || 'Game loop error';
       showError(msg, e);
       console.error('[World] Frame error stack:', e?.stack);
       setTimeout(hideError, 8000);
     }
+  }
+
+
+  // ── CAD-158: Population graph ─────────────────────────────────────────
+  let popGraphVisible = false;
+  const popGraphPanel = document.getElementById('pop-graph-panel');
+  const popGraphCanvas = document.getElementById('pop-graph');
+  const popGraphBtn    = document.getElementById('pop-graph-btn');
+  const popGraphClose  = document.getElementById('pop-graph-close');
+
+  function drawPopGraph() {
+    if (!popGraphCanvas || !popGraphVisible) return;
+    const ctx = popGraphCanvas.getContext('2d');
+    const W = popGraphCanvas.width;
+    const H = popGraphCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    if (populationHistory.length < 2) {
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = '11px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Not enough data yet...', W / 2, H / 2);
+      return;
+    }
+    const maxCount = Math.max(...populationHistory.map(p => p.count), 1);
+    const pad = 6;
+    const gW = W - pad * 2;
+    const gH = H - pad * 2;
+
+    // Grid line
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pad, pad + gH / 2);
+    ctx.lineTo(pad + gW, pad + gH / 2);
+    ctx.stroke();
+
+    // Line chart
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(80,220,120,0.9)';
+    ctx.lineWidth = 1.5;
+    populationHistory.forEach((p, i) => {
+      const x = pad + (i / (populationHistory.length - 1)) * gW;
+      const y = pad + gH - (p.count / maxCount) * gH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Fill under line
+    ctx.beginPath();
+    populationHistory.forEach((p, i) => {
+      const x = pad + (i / (populationHistory.length - 1)) * gW;
+      const y = pad + gH - (p.count / maxCount) * gH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.lineTo(pad + gW, pad + gH);
+    ctx.lineTo(pad, pad + gH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(80,220,120,0.12)';
+    ctx.fill();
+
+    // Labels
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(String(maxCount), pad, pad + 9);
+    ctx.textAlign = 'right';
+    const lastDay = populationHistory[populationHistory.length - 1]?.day ?? 0;
+    ctx.fillText('Day ' + lastDay, pad + gW, pad + gH - 2);
+  }
+
+  if (popGraphBtn) popGraphBtn.addEventListener('click', () => {
+    popGraphVisible = !popGraphVisible;
+    popGraphPanel.style.display = popGraphVisible ? 'block' : 'none';
+    popGraphBtn.style.background = popGraphVisible ? 'rgba(80,220,120,0.3)' : 'rgba(255,255,255,0.1)';
+    if (popGraphVisible) drawPopGraph();
+  });
+  if (popGraphClose) popGraphClose.addEventListener('click', () => {
+    popGraphVisible = false;
+    popGraphPanel.style.display = 'none';
+    popGraphBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
+  // ── CAD-160: Knowledge overlay ────────────────────────────────────────
+  let knowledgeOverlayVisible = false;
+  const knowledgePanel  = document.getElementById('knowledge-overlay-panel');
+  const knowledgeBtn    = document.getElementById('knowledge-overlay-btn');
+  const knowledgeClose  = document.getElementById('knowledge-overlay-close');
+  const knowledgeContent = document.getElementById('knowledge-overlay-content');
+
+  function updateKnowledgeOverlay() {
+    if (!knowledgeOverlayVisible || !knowledgeContent) return;
+    const alive = agents.filter(a => a.health > 0);
+    if (alive.length === 0) { knowledgeContent.innerHTML = '<em style="opacity:.4">No agents alive</em>'; return; }
+
+    // Group by settlement; agents not in a settlement go to "Wanderers"
+    const grouped = {};
+    for (const agent of alive) {
+      const settlement = settlementSystem.getSettlementFor(agent);
+      const key = settlement ? (settlement.name || settlement.tier || 'Camp #' + settlement.id) : '__wanderers__';
+      if (!grouped[key]) grouped[key] = { agents: [], name: key === '__wanderers__' ? 'Wanderers' : key };
+      grouped[key].agents.push(agent);
+    }
+
+    let html = '';
+    for (const group of Object.values(grouped)) {
+      // Collect all unique knowledge across agents in this group
+      const conceptSet = new Set();
+      for (const a of group.agents) {
+        for (const k of a.knowledge) conceptSet.add(k);
+      }
+      const concepts = [...conceptSet].map(id => {
+        const c = conceptGraph.concepts.get(id);
+        return c ? (c.icon ?? '') + ' ' + c.name : id;
+      });
+      html += `<div style="margin-bottom:8px;">
+        <div style="font-weight:600;opacity:.9;margin-bottom:2px;">${group.name} <span style="opacity:.5">(${group.agents.length})</span></div>`;
+      if (concepts.length === 0) {
+        html += `<div style="opacity:.4;font-size:10px;">No discoveries</div>`;
+      } else {
+        html += `<div style="opacity:.75;line-height:1.5;">${concepts.join(', ')}</div>`;
+      }
+      html += `</div>`;
+    }
+    knowledgeContent.innerHTML = html || '<em style="opacity:.4">No settlements yet</em>';
+  }
+
+  if (knowledgeBtn) knowledgeBtn.addEventListener('click', () => {
+    knowledgeOverlayVisible = !knowledgeOverlayVisible;
+    knowledgePanel.style.display = knowledgeOverlayVisible ? 'block' : 'none';
+    knowledgeBtn.style.background = knowledgeOverlayVisible ? 'rgba(160,120,240,0.3)' : 'rgba(255,255,255,0.1)';
+    if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+  });
+  if (knowledgeClose) knowledgeClose.addEventListener('click', () => {
+    knowledgeOverlayVisible = false;
+    knowledgePanel.style.display = 'none';
+    knowledgeBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
+  // ── CAD-161: Resource overlay ─────────────────────────────────────────
+  let resourceOverlayVisible = false;
+  const resourceOverlayCanvas = document.getElementById('resource-overlay');
+  const resourceOverlayBtn    = document.getElementById('resource-overlay-btn');
+
+  function drawResourceOverlay() {
+    if (!resourceOverlayCanvas || !resourceOverlayVisible) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    resourceOverlayCanvas.width  = W;
+    resourceOverlayCanvas.height = H;
+    const ctx = resourceOverlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+
+    const waterTypes = new Set(['WATER', 'DEEP_WATER']);
+    const plantTypes = new Set(['GRASS', 'FOREST', 'WOODLAND']);
+
+    for (let tx = 0; tx < world.width; tx++) {
+      for (let tz = 0; tz < world.height; tz++) {
+        const tile = world.getTile(tx, tz);
+        if (!tile) continue;
+
+        let color = null;
+        if (waterTypes.has(tile.type)) {
+          color = 'rgba(40,120,220,0.22)';
+        } else if (plantTypes.has(tile.type) && tile.resource > 0.1) {
+          color = `rgba(60,200,80,${(tile.resource * 0.35).toFixed(2)})`;
+        } else {
+          continue;
+        }
+
+        // Project tile centre to screen
+        const wx = (tx + 0.5) * TILE_SIZE;
+        const wz = (tz + 0.5) * TILE_SIZE;
+        const vec = new THREE.Vector3(wx, 0, wz);
+        vec.project(wr.camera);
+        if (vec.z > 1 || vec.z < -1) continue;
+        const sx = (vec.x *  0.5 + 0.5) * W;
+        const sy = (vec.y * -0.5 + 0.5) * H;
+
+        // Approximate screen size of one tile
+        const edgeVec = new THREE.Vector3(wx + TILE_SIZE, 0, wz);
+        edgeVec.project(wr.camera);
+        const ex = (edgeVec.x * 0.5 + 0.5) * W;
+        const radius = Math.max(2, Math.abs(ex - sx) * 0.7);
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+    }
+  }
+
+  if (resourceOverlayBtn) resourceOverlayBtn.addEventListener('click', () => {
+    resourceOverlayVisible = !resourceOverlayVisible;
+    resourceOverlayCanvas.style.display = resourceOverlayVisible ? 'block' : 'none';
+    resourceOverlayBtn.style.background = resourceOverlayVisible ? 'rgba(80,200,80,0.3)' : 'rgba(255,255,255,0.1)';
+    if (!resourceOverlayVisible) {
+      const ctx = resourceOverlayCanvas.getContext('2d');
+      ctx.clearRect(0, 0, resourceOverlayCanvas.width, resourceOverlayCanvas.height);
+    }
+  });
+
+  // ── CAD-162: Heatmap overlay ──────────────────────────────────────────
+  let heatmapOverlayVisible = false;
+  const heatmapOverlayCanvas = document.getElementById('heatmap-overlay');
+  const heatmapOverlayBtn    = document.getElementById('heatmap-overlay-btn');
+
+  function drawHeatmapOverlay() {
+    if (!heatmapOverlayCanvas || !heatmapOverlayVisible) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    heatmapOverlayCanvas.width  = W;
+    heatmapOverlayCanvas.height = H;
+    const ctx = heatmapOverlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+
+    const entries = Object.entries(heatmap);
+    if (entries.length === 0) return;
+    const maxVal = Math.max(...entries.map(([, v]) => v), 1);
+
+    for (const [key, val] of entries) {
+      const [tx, tz] = key.split(',').map(Number);
+      const wx = tx * TILE_SIZE;
+      const wz = tz * TILE_SIZE;
+      const vec = new THREE.Vector3(wx, 0, wz);
+      vec.project(wr.camera);
+      if (vec.z > 1 || vec.z < -1) continue;
+      const sx = (vec.x *  0.5 + 0.5) * W;
+      const sy = (vec.y * -0.5 + 0.5) * H;
+
+      const t = val / maxVal;
+      const r = Math.round(255 * Math.min(1, t * 2));
+      const g = Math.round(255 * Math.max(0, 1 - t * 2));
+      const a = (0.1 + t * 0.5).toFixed(2);
+
+      const edgeVec = new THREE.Vector3(wx + TILE_SIZE, 0, wz);
+      edgeVec.project(wr.camera);
+      const ex = (edgeVec.x * 0.5 + 0.5) * W;
+      const radius = Math.max(3, Math.abs(ex - sx));
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},0,${a})`;
+      ctx.fill();
+    }
+  }
+
+  if (heatmapOverlayBtn) heatmapOverlayBtn.addEventListener('click', () => {
+    heatmapOverlayVisible = !heatmapOverlayVisible;
+    heatmapOverlayCanvas.style.display = heatmapOverlayVisible ? 'block' : 'none';
+    heatmapOverlayBtn.style.background = heatmapOverlayVisible ? 'rgba(255,100,40,0.3)' : 'rgba(255,255,255,0.1)';
+    if (!heatmapOverlayVisible) {
+      const ctx = heatmapOverlayCanvas.getContext('2d');
+      ctx.clearRect(0, 0, heatmapOverlayCanvas.width, heatmapOverlayCanvas.height);
+    }
+  });
+
+  // ── Overlay render tick (called each frame after wr.render()) ─────────
+  function updateOverlays() {
+    if (popGraphVisible) drawPopGraph();
+    if (resourceOverlayVisible) drawResourceOverlay();
+    if (heatmapOverlayVisible) drawHeatmapOverlay();
+    if (knowledgeOverlayVisible) updateKnowledgeOverlay();
   }
 
   requestAnimationFrame(frame);
