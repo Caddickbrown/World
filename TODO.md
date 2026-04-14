@@ -33,8 +33,8 @@
 - [x] Mini-map — 2D overview of terrain (colour by type), agent dots, maybe fires
 - [x] Timeline/history — scrollable log of discoveries, births, weather events, population milestones
 - [x] Achievements — e.g. "Survive 100 days", "Discover all Era 1 concepts", "Population 50"; store in localStorage
-- [ ] Fire gives light and heat at night — scale ambient/point lights by fire proximity and time-of-day; stronger cold at night
-- [ ] More discovery condition types — e.g. has_item, season, near_fire (in concepts.json + ConceptGraph)
+- [x] Fire gives light and heat at night — scale ambient/point lights by fire proximity and time-of-day; stronger cold at night
+- [x] More discovery condition types — e.g. has_item, season, near_fire (in concepts.json + ConceptGraph)
 
 ### Technical & content
 - [ ] Web Workers — run simulation tick in worker; main thread only render + input (scale to larger populations)
@@ -43,11 +43,11 @@
 - [x] Crafting — recipes (e.g. wood + stone → stone_tool; ore + fire → metal_tool); gate on concepts, consume from inventory
 
 ### Cross-cutting / deeper
-- [ ] Carrying capacity from water — factor in fishing (water tiles) so coasts/islands can support population
+- [x] Carrying capacity from water — factor in fishing (water tiles) so coasts/islands can support population
 - [ ] Seasonal migration — agents (or animals) bias movement toward better tiles in winter
 - [ ] Natural disasters — drought, flood, blight (temporary tile or resource effects; seed + day for reproducibility)
-- [ ] First discoverer / lineage — track which agent first discovered each concept; show in timeline or on concept
-- [ ] Death log — on agent death, record "El died of old age (Day 67)" or "starvation" for timeline/post-mortem
+- [x] First discoverer / lineage — track which agent first discovered each concept; show in timeline or on concept
+- [x] Death log — on agent death, record "El died of old age (Day 67)" or "starvation" for timeline/post-mortem
 
 ## Done
 - [x] Whale — fixed aspect ratio (now properly long, not wide), parts all scale dynamically with body size
