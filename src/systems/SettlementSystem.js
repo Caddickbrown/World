@@ -65,6 +65,8 @@ export class SettlementSystem {
               foundedDay: currentDay ?? 0,
               tier: 'camp',
               population: memberIds.length,
+              // CAD-181: settlement-level knowledge pool
+              knowledgePool: new Set(),
             };
             this.settlements.push(settlement);
             // Reset timers for founding members
@@ -159,5 +161,47 @@ export class SettlementSystem {
    */
   getSettlementFor(agent) {
     return this.settlements.find(s => s.memberIds.includes(agent.id)) || null;
+  }
+
+  /**
+   * CAD-181: Sync agent knowledge into settlement pool.
+   * Call this after agents discover new concepts.
+   * @param {object[]} agents
+   */
+  syncKnowledgePools(agents) {
+    for (const settlement of this.settlements) {
+      for (const agentId of settlement.memberIds) {
+        const agent = agents.find(a => a.id === agentId);
+        if (!agent) continue;
+        for (const concept of agent.knowledge) {
+          settlement.knowledgePool.add(concept);
+        }
+      }
+    }
+  }
+
+  /**
+   * CAD-181: When an agent joins a settlement, give them a 20% chance
+   * to learn each concept in the settlement's knowledgePool.
+   * @param {object} agent
+   * @param {object} settlement
+   */
+  onAgentJoinsSettlement(agent, settlement) {
+    if (!settlement.knowledgePool) return;
+    for (const concept of settlement.knowledgePool) {
+      if (!agent.knowledge.has(concept) && Math.random() < 0.20) {
+        agent.knowledge.add(concept);
+      }
+    }
+  }
+
+  /**
+   * CAD-181: Return all known concepts for a settlement by ID.
+   * @param {number} settlementId
+   * @returns {Set|null}
+   */
+  getSettlementKnowledge(settlementId) {
+    const s = this.settlements.find(s => s.id === settlementId);
+    return s ? s.knowledgePool : null;
   }
 }
