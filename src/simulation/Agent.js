@@ -351,6 +351,19 @@ export class Agent {
         if (this.needs.hunger < 0.6) {
           this._tryEat(itemDefs);
         }
+
+        // Try cooking raw food if agent has fire + cooking knowledge
+        GatheringSystem.cook(this, itemDefs);
+
+        // Try hunting for raw_meat on suitable tiles
+        const huntResults = GatheringSystem.hunt(this, tile);
+        for (const { itemId, quantity } of huntResults) {
+          const added = this.inventory.add(itemId, quantity, itemDefs);
+          const overflow = quantity - added;
+          if (overflow > 0 && world.tileItems) {
+            world.tileItems.add(tile.x, tile.z, itemId, overflow);
+          }
+        }
       } else if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST || tile.type === TileType.WOODLAND)) {
         // Fallback: old direct-hunger system if itemDefs not loaded
         let toolMult  = this.knowledge.has('stone_tools') ? 1.20 : 1.0;
