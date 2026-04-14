@@ -13,7 +13,8 @@
     "gatherSource": {
       "tileTypes": [
         "GRASS",
-        "FOREST"
+        "FOREST",
+        "WOODLAND"
       ],
       "activity": "foraging",
       "baseYield": [
