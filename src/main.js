@@ -129,6 +129,11 @@ async function init() {
   butterflyRenderer = new ButterflyRenderer(wr.scene, world);
   beeRenderer       = new BeeRenderer(wr.scene, world);
   flowerRenderer    = new FlowerRenderer(wr.scene, world);
+  foxes = world.getWildHorseSpawnPoints(6).map(p => new Fox(p.x, p.z));
+  foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
+  deer = world.getWildHorseSpawnPoints(5).map(p => new Deer(p.x, p.z));
+  deerRenderer      = new DeerRenderer(wr.scene, deer, world);
+  birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
   time = new TimeSystem();
   weather = new WeatherSystem(world.width, world.height);
@@ -140,6 +145,7 @@ async function init() {
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
+  const populationManager = new PopulationManager(world);
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -255,6 +261,9 @@ async function init() {
     butterflyRenderer?.dispose();
     beeRenderer?.dispose();
     flowerRenderer?.dispose();
+    foxRenderer?.dispose();
+    deerRenderer?.dispose();
+    birdFlockRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
@@ -277,6 +286,13 @@ async function init() {
     butterflyRenderer = new ButterflyRenderer(wr.scene, world);
     beeRenderer       = new BeeRenderer(wr.scene, world);
     flowerRenderer    = new FlowerRenderer(wr.scene, world);
+    foxes.length = 0;
+    world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+    foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
+    deer.length = 0;
+    world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+    deerRenderer      = new DeerRenderer(wr.scene, deer, world);
+    birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -351,6 +367,13 @@ async function init() {
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
+        foxes.length = 0;
+        world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+        foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
+        deer.length = 0;
+        world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+        deerRenderer      = new DeerRenderer(wr.scene, deer, world);
+        birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -407,6 +430,9 @@ async function init() {
         butterflyRenderer?.dispose();
         beeRenderer?.dispose();
         flowerRenderer?.dispose();
+        foxRenderer?.dispose();
+        deerRenderer?.dispose();
+        birdFlockRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
@@ -439,6 +465,13 @@ async function init() {
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
+        foxes.length = 0;
+        world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+        foxRenderer       = new FoxRenderer(wr.scene, foxes, world);
+        deer.length = 0;
+        world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+        deerRenderer      = new DeerRenderer(wr.scene, deer, world);
+        birdFlockRenderer = new BirdFlockRenderer(wr.scene);
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -1001,6 +1034,12 @@ async function init() {
       // Tick wild horse simulation
       for (const horse of horses) horse.tick(delta, world, horses);
 
+      // Tick foxes
+      for (const fox of foxes) fox.tick(delta, world, agents);
+
+      // Tick deer
+      for (const d of deer) d.tick(delta, world, agents, predators);
+
       // Tick predators (food chain)
       const sheepArr = sheepRenderer ? sheepRenderer.sheep : [];
       for (const pred of predators) pred.tick(delta, agents, world, sheepArr);
@@ -1113,6 +1152,7 @@ async function init() {
 
       // ── SettlementSystem tick ───────────────────────────────────────────
       settlementSystem.tick(delta, agents, world, time.day);
+      populationManager.tick(delta, sheepRenderer, horseRenderer, predators, world);
       settlementSystem.updateMembership(agents);
       for (const s of settlementSystem.settlements) {
         settlementSystem.nameSettlement(s, agents);
@@ -1188,6 +1228,9 @@ async function init() {
     butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
     beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
     flowerRenderer?.update(delta > 0 ? delta : 0, time.season);
+    foxRenderer?.update();
+    deerRenderer?.update();
+    birdFlockRenderer?.update(delta > 0 ? delta : 0);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
     wr.render();
