@@ -79,6 +79,27 @@ export class GatheringSystem {
       if (tile.depletionLevel !== undefined) tile.depletionLevel = Math.min(1, tile.depletionLevel + 0.05);
     }
 
+    // Post-process: apply mushroom poison risk
+    for (let i = results.length - 1; i >= 0; i--) {
+      const gathered = results[i];
+      const def = itemDefs.get(gathered.itemId);
+      if (!def || !def.poisonChance) continue;
+
+      // Herbalism knowledge protects against poisoning
+      if (agent.knowledge.has('herbalism')) continue;
+
+      if (Math.random() < def.poisonChance) {
+        // Remove the mushrooms — they were poisonous
+        results.splice(i, 1);
+        // Apply poison damage to agent
+        if (def.poisonEffect) {
+          if (def.poisonEffect.health !== undefined && agent.health !== undefined) {
+            agent.health = Math.max(0, agent.health + def.poisonEffect.health);
+          }
+        }
+      }
+    }
+
     return results;
   }
 
@@ -208,4 +229,5 @@ export class GatheringSystem {
     return true;
   }
 }
+
 
