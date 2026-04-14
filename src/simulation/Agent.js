@@ -435,6 +435,11 @@ export class Agent {
             world.tileItems.add(tile.x, tile.z, itemId, overflow);
           }
         }
+
+        // Craft medicine from herbs (requires herbalism knowledge, 3 herbs → 1 medicine)
+        if (this.knowledge.has('herbalism')) {
+          GatheringSystem.craftMedicine(this, itemDefs);
+        }
       } else if (tile && (tile.type === TileType.GRASS || tile.type === TileType.FOREST || tile.type === TileType.WOODLAND)) {
         // Fallback: old direct-hunger system if itemDefs not loaded
         let toolMult  = this.knowledge.has('stone_tools') ? 1.20 : 1.0;
@@ -461,6 +466,11 @@ export class Agent {
     const gatherThreshold = taskDef?.gatherThreshold ?? 0.25;
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
     const envMult = this._lastWeatherMult ?? 1.0;
+
+    // Low health — use medicine from inventory if available
+    if (this.health < 0.40 && this._itemDefs) {
+      this._useMedicine(this._itemDefs);
+    }
 
     // Critical hunger — eat from inventory first, then seek food
     if (this.needs.hunger < gatherThreshold) {
@@ -727,6 +737,16 @@ export class Agent {
     if (def.effects?.health) {
       this.health = Math.min(1.0, this.health + def.effects.health);
     }
+    return true;
+  }
+
+  /** Use medicine from inventory to restore health. Returns true if medicine was consumed. */
+  _useMedicine(itemDefs) {
+    if (!itemDefs || !this.inventory.has('medicine')) return false;
+    const def = itemDefs.get('medicine');
+    if (!def) return false;
+    this.inventory.remove('medicine', 1);
+    this.health = Math.min(1.0, this.health + (def.effects?.health ?? 0.35));
     return true;
   }
 
