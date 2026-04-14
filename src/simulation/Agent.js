@@ -1,6 +1,7 @@
 import { TileType } from './World.js';
 import { Inventory } from './Inventory.js';
 import { GatheringSystem } from './GatheringSystem.js';
+import { UtilityAI } from '../systems/UtilityAI.js';
 
 let nextId = 1;
 
@@ -202,7 +203,9 @@ export class Agent {
 
   // ── Main tick ─────────────────────────────────────────────────────────
 
-  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null, season = null) {
+  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null, season = null, spatialGrid = null) {
+    // Store spatial grid for use in proximity checks this tick
+    this._spatialGrid = spatialGrid;
     this.age += delta;
 
     // Starvation: track time at zero hunger, die after 15 game-sec
@@ -362,7 +365,7 @@ export class Agent {
     if (this._needsCheckTimer <= 0) {
       this._needsCheckTimer = 3 + Math.random() * 4;
       if (this.state === AgentState.WANDERING || this.state === AgentState.DISCOVERING) {
-        this._decideAction(world, allAgents);
+        this._decideAction(world, allAgents, conceptGraph);
       }
     }
 
@@ -450,10 +453,10 @@ export class Agent {
       this._pickUpGroundItems(world, itemDefs);
     }
 
-    this._decideAction(world, allAgents);
+    this._decideAction(world, allAgents, conceptGraph);
   }
 
-  _decideAction(world, allAgents = []) {
+  _decideAction(world, allAgents = [], conceptGraph = null) {
     const taskDef = this.task ? Agent.TASKS[this.task] : null;
     const gatherThreshold = taskDef?.gatherThreshold ?? 0.25;
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
@@ -501,6 +504,37 @@ export class Agent {
       return;
     }
 
+    // UtilityAI — score all remaining actions and pick the best
+    const best = UtilityAI.bestAction(this, world, allAgents, conceptGraph);
+    if (best) {
+      switch (best.name) {
+        case 'gather':
+          this.state = AgentState.GATHERING;
+          this._pickGatherTarget(world);
+          return;
+        case 'sleep':
+          this.state = AgentState.SLEEPING;
+          this.restTimer = 10 + Math.random() * 8;
+          return;
+        case 'fish':
+          this.state = AgentState.FISHING;
+          this.fishingTimer = 6 + Math.random() * 4;
+          this._fishingTrip = true;
+          return;
+        case 'perform':
+          this.state = AgentState.PERFORMING;
+          this.performTimer = 5 + Math.random() * 5;
+          return;
+        case 'socialize':
+        case 'hunt':
+        case 'craft':
+        case 'wander':
+        default:
+          // Fall through to wander
+          break;
+      }
+    }
+
     this.state = AgentState.WANDERING;
     this._pickWanderTarget(world, allAgents);
   }
@@ -513,8 +547,12 @@ export class Agent {
     let radius = 4 + Math.floor(this.curiosity * 4) + radiusBonus;
 
     // Teacher: bias toward other agents to share knowledge
+    // Use SpatialGrid for nearby candidates when available, else fall back to allAgents
     if (taskDef?.seekSocial && allAgents.length > 1) {
-      const others = allAgents.filter(a => a !== this && a.health > 0);
+      const candidatePool = this._spatialGrid
+        ? this._spatialGrid.getNearby(this.x, this.z, radius + 2).filter(a => a !== this && a.health > 0)
+        : allAgents.filter(a => a !== this && a.health > 0);
+      const others = candidatePool.length > 0 ? candidatePool : allAgents.filter(a => a !== this && a.health > 0);
       if (others.length > 0 && Math.random() < 0.6) {
         const nearest = others.reduce((best, a) => {
           const d = Math.hypot(a.x - this.x, a.z - this.z);
@@ -613,7 +651,12 @@ export class Agent {
     if (this.socialTimer > 0) return;
     this.socialTimer = (SOCIAL_COOLDOWN + Math.random() * 2) * (1 / this.socialMult);
 
-    for (const other of allAgents) {
+    // Use SpatialGrid for fast proximity query when available
+    const candidates = this._spatialGrid
+      ? this._spatialGrid.getNearby(this.x, this.z, 5.0)
+      : allAgents;
+
+    for (const other of candidates) {
       if (other === this || other.health <= 0) continue;
       const dist = Math.hypot(this.x - other.x, this.z - other.z);
       if (dist < 5.0) {
