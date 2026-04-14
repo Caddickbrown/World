@@ -272,5 +272,17 @@
         "raft"
       ]
     }
+  },
+  {
+    "id": "raw_meat",
+    "name": "Raw Meat",
+    "category": "food",
+    "icon": "\ud83e\udd69",
+    "weight": 0.8,
+    "stackSize": 5,
+    "effects": {
+      "hunger": 0.25
+    },
+    "spoilRate": 0.015
   }
 ]
