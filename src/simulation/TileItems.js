@@ -51,16 +51,22 @@ export class TileItems {
     return this._items.get(this._key(tx, tz)) ?? [];
   }
 
-  /** Tick spoilage on all ground items (2× faster than inventory). */
-  tickSpoilage(delta, itemDefs) {
+  /**
+   * Tick spoilage on all ground items (2× faster than inventory by default).
+   * @param {number} delta — game-seconds elapsed
+   * @param {Map} itemDefs — item definitions
+   * @param {number} [disasterMult=1.0] — extra multiplier from DisasterSystem (e.g. 5× during blight)
+   */
+  tickSpoilage(delta, itemDefs, disasterMult = 1.0) {
     const GROUND_SPOIL_MULT = 2.0;
+    const totalMult = GROUND_SPOIL_MULT * disasterMult;
     for (const [key, stacks] of this._items) {
       for (let i = stacks.length - 1; i >= 0; i--) {
         const s = stacks[i];
         const def = itemDefs.get(s.itemId);
         const rate = def?.spoilRate ?? 0;
         if (rate <= 0) continue;
-        s.spoilTimer += rate * delta * GROUND_SPOIL_MULT;
+        s.spoilTimer += rate * delta * totalMult;
         if (s.spoilTimer >= 1) {
           const lost = Math.floor(s.spoilTimer);
           s.quantity -= lost;
