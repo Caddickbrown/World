@@ -128,6 +128,17 @@ export class ConceptGraph {
         const near = hives.some(h => Math.hypot(h.x - agent.x, h.z - agent.z) < cond.value);
         if (!near) return false;
       }
+      if (cond.type === 'has_item') {
+        if (!agent.inventory?.has(cond.value)) return false;
+      }
+      if (cond.type === 'near_fire') {
+        // Check if a campfire building exists within 3 tiles
+        const buildings = world?.buildings ?? [];
+        const nearFire = buildings.some(b =>
+          b.type === 'campfire' && Math.hypot(b.x - agent.x, b.z - agent.z) <= 3
+        );
+        if (!nearFire) return false;
+      }
     }
     return true;
   }
