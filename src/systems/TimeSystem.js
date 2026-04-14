@@ -41,4 +41,10 @@ export class TimeSystem {
   get timeOfDay() {
     return (this.gameTime % this.dayLength) / this.dayLength;
   }
+
+  /** Current hour of the day (0–23.99) */
+  get hour() {
+    return this.timeOfDay * 24;
+  }
 }
+
