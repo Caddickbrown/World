@@ -3,7 +3,7 @@
     "id": "berries",
     "name": "Berries",
     "category": "food",
-    "icon": "\ud83e\uded0",
+    "icon": "🫐",
     "weight": 0.2,
     "stackSize": 10,
     "effects": {
@@ -13,8 +13,7 @@
     "gatherSource": {
       "tileTypes": [
         "GRASS",
-        "FOREST",
-        "WOODLAND"
+        "FOREST"
       ],
       "activity": "foraging",
       "baseYield": [
@@ -28,7 +27,7 @@
     "id": "fish",
     "name": "Fish",
     "category": "food",
-    "icon": "\ud83d\udc1f",
+    "icon": "🐟",
     "weight": 0.5,
     "stackSize": 5,
     "effects": {
@@ -57,7 +56,7 @@
     "id": "cooked_fish",
     "name": "Cooked Fish",
     "category": "food",
-    "icon": "\ud83c\udf56",
+    "icon": "🍖",
     "weight": 0.5,
     "stackSize": 5,
     "effects": {
@@ -69,7 +68,7 @@
     "id": "meat",
     "name": "Raw Meat",
     "category": "food",
-    "icon": "\ud83e\udd69",
+    "icon": "🥩",
     "weight": 0.8,
     "stackSize": 5,
     "effects": {
@@ -96,7 +95,7 @@
     "id": "cooked_meat",
     "name": "Cooked Meat",
     "category": "food",
-    "icon": "\ud83e\udd69",
+    "icon": "🥩",
     "weight": 0.6,
     "stackSize": 5,
     "effects": {
@@ -108,7 +107,7 @@
     "id": "herbs",
     "name": "Herbs",
     "category": "food",
-    "icon": "\ud83c\udf3f",
+    "icon": "🌿",
     "weight": 0.1,
     "stackSize": 10,
     "effects": {
@@ -118,7 +117,8 @@
     "spoilRate": 0.006,
     "gatherSource": {
       "tileTypes": [
-        "FOREST"
+        "FOREST",
+        "WOODLAND"
       ],
       "activity": "foraging",
       "baseYield": [
@@ -131,10 +131,30 @@
     }
   },
   {
+    "id": "medicine",
+    "name": "Medicine",
+    "category": "medicine",
+    "icon": "💊",
+    "weight": 0.2,
+    "stackSize": 5,
+    "effects": {
+      "health": 0.35
+    },
+    "spoilRate": 0.002,
+    "craftFrom": [
+      "herbs",
+      "herbs",
+      "herbs"
+    ],
+    "knowledge": [
+      "herbalism"
+    ]
+  },
+  {
     "id": "wood",
     "name": "Wood",
     "category": "material",
-    "icon": "\ud83e\udeb5",
+    "icon": "🪵",
     "weight": 1.5,
     "stackSize": 5,
     "gatherSource": {
@@ -153,7 +173,7 @@
     "id": "stone",
     "name": "Stone",
     "category": "material",
-    "icon": "\ud83e\udea8",
+    "icon": "🪨",
     "weight": 2.0,
     "stackSize": 5,
     "gatherSource": {
@@ -172,7 +192,7 @@
     "id": "hide",
     "name": "Hide",
     "category": "material",
-    "icon": "\ud83d\udfeb",
+    "icon": "🟫",
     "weight": 1.0,
     "stackSize": 5,
     "gatherSource": {
@@ -193,7 +213,7 @@
     "id": "ore",
     "name": "Ore",
     "category": "material",
-    "icon": "\u26cf\ufe0f",
+    "icon": "⛏️",
     "weight": 2.5,
     "stackSize": 3,
     "gatherSource": {
@@ -215,7 +235,7 @@
     "id": "stone_tool",
     "name": "Stone Tool",
     "category": "tool",
-    "icon": "\ud83e\ude93",
+    "icon": "🪓",
     "weight": 1.5,
     "stackSize": 1,
     "craftFrom": [
@@ -238,7 +258,7 @@
     "id": "fishing_rod",
     "name": "Fishing Rod",
     "category": "tool",
-    "icon": "\ud83c\udfa3",
+    "icon": "🎣",
     "weight": 1.0,
     "stackSize": 1,
     "craftFrom": [
@@ -258,7 +278,7 @@
     "id": "rope",
     "name": "Rope",
     "category": "tool",
-    "icon": "\ud83e\udea2",
+    "icon": "🪢",
     "weight": 0.5,
     "stackSize": 3,
     "craftFrom": [
@@ -278,7 +298,7 @@
     "id": "raw_meat",
     "name": "Raw Meat",
     "category": "food",
-    "icon": "\ud83e\udd69",
+    "icon": "🥩",
     "weight": 0.8,
     "stackSize": 5,
     "effects": {
