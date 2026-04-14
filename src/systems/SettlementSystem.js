@@ -63,6 +63,8 @@ export class SettlementSystem {
               memberIds,
               name: null,
               foundedDay: currentDay ?? 0,
+              tier: 'camp',
+              population: memberIds.length,
             };
             this.settlements.push(settlement);
             // Reset timers for founding members
@@ -87,13 +89,17 @@ export class SettlementSystem {
       settlement.memberIds = alive
         .filter(a => Math.hypot(a.x - settlement.x, a.z - settlement.z) <= 6)
         .map(a => a.id);
+      settlement.population = settlement.memberIds.length;
     }
     // Remove empty settlements
     this.settlements = this.settlements.filter(s => s.memberIds.length > 0);
   }
 
   /**
-   * Name a settlement if any member has 'writing' knowledge.
+   * Name a settlement based on knowledge tier.
+   * Tier 1 (camp): unnamed, fewer than 5 members, no writing
+   * Tier 2 (hamlet): 5+ members, no writing — simple Adj+Noun name
+   * Tier 3 (named): any member has writing — rich procedural name
    * @param {object} settlement
    * @param {object[]} agents
    */
@@ -101,10 +107,57 @@ export class SettlementSystem {
     if (settlement.name) return;
     const members = agents.filter(a => settlement.memberIds.includes(a.id));
     const hasWriting = members.some(a => a.knowledge?.has('writing'));
-    if (!hasWriting) return;
 
-    const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
-    const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
-    settlement.name = adj + ' ' + noun;
+    if (hasWriting) {
+      settlement.name = this._generateWrittenName(settlement);
+      settlement.tier = 'named';
+    } else if (settlement.memberIds.length >= 5) {
+      const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+      const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+      settlement.name = adj + ' ' + noun;
+      settlement.tier = 'hamlet';
+    } else {
+      settlement.tier = 'camp';
+    }
+  }
+
+  /**
+   * Generate a richer procedural name using prefix+suffix syllables.
+   * Uses settlement position as a seed for deterministic output.
+   * @param {object} settlement
+   * @returns {string}
+   */
+  _generateWrittenName(settlement) {
+    const prefixes = [
+      'Ash', 'Elm', 'Oak', 'Thorn', 'Grey', 'Stone', 'Bright', 'Iron', 'Silver', 'Amber',
+      'Crag', 'Marsh', 'Fern', 'Moss', 'Swift', 'Dark', 'High', 'Low', 'North', 'West',
+    ];
+    const suffixes = [
+      'wick', 'ford', 'ham', 'ton', 'burgh', 'dale', 'vale', 'moor', 'wood', 'field',
+      'thorpe', 'ley', 'bridge', 'well', 'gate', 'mere', 'haven', 'cross', 'cliff', 'shore',
+    ];
+
+    const seed = (settlement.x * 31 + settlement.z * 17) % (prefixes.length * suffixes.length);
+    const prefix = prefixes[Math.abs(seed) % prefixes.length];
+    const suffix = suffixes[Math.abs(Math.floor(seed / prefixes.length)) % suffixes.length];
+    return prefix + suffix;
+  }
+
+  /**
+   * Return the number of members in a settlement.
+   * @param {object} settlement
+   * @returns {number}
+   */
+  settlementPopulation(settlement) {
+    return settlement.memberIds.length;
+  }
+
+  /**
+   * Find the settlement an agent belongs to.
+   * @param {object} agent
+   * @returns {object|null}
+   */
+  getSettlementFor(agent) {
+    return this.settlements.find(s => s.memberIds.includes(agent.id)) || null;
   }
 }
