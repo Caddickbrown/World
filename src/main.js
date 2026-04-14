@@ -1652,7 +1652,56 @@ async function init() {
 
   function updateOverlays() {
     if (popGraphVisible) drawPopGraph();
+    if (knowledgeOverlayVisible) updateKnowledgeOverlay();
   }
+
+
+  // ── CAD-160: Knowledge overlay ────────────────────────────────────────
+  let knowledgeOverlayVisible = false;
+  const knowledgePanel   = document.getElementById('knowledge-overlay-panel');
+  const knowledgeBtn     = document.getElementById('knowledge-overlay-btn');
+  const knowledgeClose   = document.getElementById('knowledge-overlay-close');
+  const knowledgeContent = document.getElementById('knowledge-overlay-content');
+
+  function updateKnowledgeOverlay() {
+    if (!knowledgeOverlayVisible || !knowledgeContent) return;
+    const alive = agents.filter(a => a.health > 0);
+    if (alive.length === 0) { knowledgeContent.innerHTML = '<em style="opacity:.4">No agents alive</em>'; return; }
+    const grouped = {};
+    for (const agent of alive) {
+      const settlement = settlementSystem.getSettlementFor(agent);
+      const key = settlement ? (settlement.name || settlement.tier || 'Camp #' + settlement.id) : '__wanderers__';
+      if (!grouped[key]) grouped[key] = { agents: [], name: key === '__wanderers__' ? 'Wanderers' : key };
+      grouped[key].agents.push(agent);
+    }
+    let html = '';
+    for (const group of Object.values(grouped)) {
+      const conceptSet = new Set();
+      for (const a of group.agents) for (const k of a.knowledge) conceptSet.add(k);
+      const concepts = [...conceptSet].map(id => {
+        const c = conceptGraph.concepts.get(id);
+        return c ? (c.icon ?? '') + ' ' + c.name : id;
+      });
+      html += '<div style="margin-bottom:8px;">';
+      html += '<div style="font-weight:600;opacity:.9;margin-bottom:2px;">' + group.name + ' <span style="opacity:.5">(' + group.agents.length + ')</span></div>';
+      if (concepts.length === 0) html += '<div style="opacity:.4;font-size:10px;">No discoveries</div>';
+      else html += '<div style="opacity:.75;line-height:1.5;">' + concepts.join(', ') + '</div>';
+      html += '</div>';
+    }
+    knowledgeContent.innerHTML = html || '<em style="opacity:.4">No settlements yet</em>';
+  }
+
+  if (knowledgeBtn) knowledgeBtn.addEventListener('click', () => {
+    knowledgeOverlayVisible = !knowledgeOverlayVisible;
+    knowledgePanel.style.display = knowledgeOverlayVisible ? 'block' : 'none';
+    knowledgeBtn.style.background = knowledgeOverlayVisible ? 'rgba(160,120,240,0.3)' : 'rgba(255,255,255,0.1)';
+    if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+  });
+  if (knowledgeClose) knowledgeClose.addEventListener('click', () => {
+    knowledgeOverlayVisible = false;
+    knowledgePanel.style.display = 'none';
+    knowledgeBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
 
   requestAnimationFrame(frame);
   } catch (e) {
