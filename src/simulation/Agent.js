@@ -82,6 +82,9 @@ export class Agent {
     this._lastWeatherMult = 1.0;
     /** Cooldown before this agent can light another campfire (game-sec) */
     this._fireCooldown = 20 + Math.random() * 20;
+
+    /** Starvation: tracks how long hunger has been at zero (game-sec) */
+    this.starvationTimer = 0;
   }
 
   static get TASKS() {
@@ -107,6 +110,15 @@ export class Agent {
     return this.maxAge * (1 + this.ageBonus);
   }
 
+  /** True when the agent has reached 75% of its effective lifespan */
+  get isElderly() { return this.age >= this.lifeExpectancy * 0.75; }
+
+  /** Movement speed multiplier — elderly agents slow down */
+  get speedMult() { return this.isElderly ? 0.7 : 1.0; }
+
+  /** Gathering efficiency multiplier — elderly agents gather less */
+  get gatherMult() { return this.isElderly ? 0.8 : 1.0; }
+
   _adoptTask(allAgents) {
     if (this.task || !this.knowledge.has('organisation')) return;
     const tasks = Object.keys(Agent.TASKS);
@@ -121,6 +133,19 @@ export class Agent {
   tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null) {
     this.age += delta;
 
+    // Starvation: track time at zero hunger, die after 15 game-sec
+    if (this.needs.hunger <= 0) {
+      this.starvationTimer += delta;
+      if (this.starvationTimer >= 15) {
+        this._dropAllItems(world);
+        this.isDead = true;
+        this.health = 0;
+        return;
+      }
+    } else {
+      this.starvationTimer = 0;
+    }
+
     if (this.knowledge.has('organisation') && !this.task) this._adoptTask(allAgents);
 
     // Knowledge bonuses
@@ -132,6 +157,7 @@ export class Agent {
     // Concepts extend lifespan
     if (this.age > this.lifeExpectancy) {
       this._dropAllItems(world);
+      this.isDead = true;
       this.health = 0;
       return; // dead of old age
     }
@@ -255,7 +281,7 @@ export class Agent {
     const dist = Math.hypot(dx, dz);
 
     if (dist > 0.04) {
-      const move = Math.min(AGENT_SPEED * delta, dist);
+      const move = Math.min(AGENT_SPEED * this.speedMult * delta, dist);
       const newX = this.x + (dx / dist) * move;
       const newZ = this.z + (dz / dist) * move;
       if (world.canTraverse(Math.floor(newX), Math.floor(newZ), this.knowledge)) {
