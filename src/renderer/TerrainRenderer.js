@@ -7,6 +7,7 @@ const TILE_HEIGHT = {
   [TileType.WATER]:    0.05,
   [TileType.BEACH]:    0.10,
   [TileType.GRASS]:    0.14,
+  [TileType.WOODLAND]: 0.17,
   [TileType.DESERT]:   0.12,
   [TileType.FOREST]:   0.24,
   [TileType.STONE]:    0.34,
@@ -19,6 +20,7 @@ const TILE_COLOR_HSL = {
   [TileType.WATER]:    [208, 82, 55],
   [TileType.BEACH]:    [ 42, 60, 72],
   [TileType.GRASS]:    [ 94, 62, 50],
+  [TileType.WOODLAND]: [110, 52, 38],
   [TileType.DESERT]:   [ 38, 55, 62],
   [TileType.FOREST]:   [132, 66, 30],
   [TileType.STONE]:    [ 28, 22, 62],
@@ -35,6 +37,14 @@ export class TerrainRenderer {
     this._animatedAnimals = []; // { mesh, instances: [{baseX,baseY,baseZ,scale,rotY,seed}], config }
     this._animTime = 0;
     this._build();
+  }
+
+  /**
+   * Returns the Y world-coordinate of the top surface of a tile of the given type.
+   * Used by fauna and flora renderers to place meshes at the correct height.
+   */
+  static surfaceY(tileType) {
+    return TILE_HEIGHT[tileType] ?? 0.14;
   }
 
   /** Remove all terrain meshes and free GPU memory */
@@ -55,6 +65,7 @@ export class TerrainRenderer {
       [TileType.WATER]:    [],
       [TileType.BEACH]:    [],
       [TileType.GRASS]:    [],
+      [TileType.WOODLAND]: [],
       [TileType.DESERT]:   [],
       [TileType.FOREST]:   [],
       [TileType.STONE]:    [],
@@ -63,7 +74,8 @@ export class TerrainRenderer {
 
     for (let z = 0; z < this.world.height; z++) {
       for (let x = 0; x < this.world.width; x++) {
-        buckets[this.world.tiles[z][x].type].push(this.world.tiles[z][x]);
+        const tile = this.world.tiles[z][x];
+        if (buckets[tile.type]) buckets[tile.type].push(tile);
       }
     }
 
