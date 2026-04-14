@@ -1653,6 +1653,7 @@ async function init() {
   function updateOverlays() {
     if (popGraphVisible) drawPopGraph();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+    if (resourceOverlayVisible) drawResourceOverlay();
   }
 
 
@@ -1701,6 +1702,61 @@ async function init() {
     knowledgeOverlayVisible = false;
     knowledgePanel.style.display = 'none';
     knowledgeBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
+
+  // ── CAD-161: Resource overlay ─────────────────────────────────────────
+  let resourceOverlayVisible = false;
+  const resourceOverlayCanvas = document.getElementById('resource-overlay');
+  const resourceOverlayBtn    = document.getElementById('resource-overlay-btn');
+
+  function drawResourceOverlay() {
+    if (!resourceOverlayCanvas || !resourceOverlayVisible) return;
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    resourceOverlayCanvas.width  = W;
+    resourceOverlayCanvas.height = H;
+    const ctx = resourceOverlayCanvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+    const waterTypes = new Set(['WATER', 'DEEP_WATER']);
+    const plantTypes = new Set(['GRASS', 'FOREST', 'WOODLAND']);
+    for (let tx = 0; tx < world.width; tx++) {
+      for (let tz = 0; tz < world.height; tz++) {
+        const tile = world.getTile(tx, tz);
+        if (!tile) continue;
+        let color = null;
+        if (waterTypes.has(tile.type)) {
+          color = 'rgba(40,120,220,0.22)';
+        } else if (plantTypes.has(tile.type) && tile.resource > 0.1) {
+          color = 'rgba(60,200,80,' + (tile.resource * 0.35).toFixed(2) + ')';
+        } else { continue; }
+        const wx = (tx + 0.5) * TILE_SIZE;
+        const wz = (tz + 0.5) * TILE_SIZE;
+        const vec = new THREE.Vector3(wx, 0, wz);
+        vec.project(wr.camera);
+        if (vec.z > 1 || vec.z < -1) continue;
+        const sx = (vec.x *  0.5 + 0.5) * W;
+        const sy = (vec.y * -0.5 + 0.5) * H;
+        const edgeVec = new THREE.Vector3(wx + TILE_SIZE, 0, wz);
+        edgeVec.project(wr.camera);
+        const ex = (edgeVec.x * 0.5 + 0.5) * W;
+        const radius = Math.max(2, Math.abs(ex - sx) * 0.7);
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+    }
+  }
+
+  if (resourceOverlayBtn) resourceOverlayBtn.addEventListener('click', () => {
+    resourceOverlayVisible = !resourceOverlayVisible;
+    resourceOverlayCanvas.style.display = resourceOverlayVisible ? 'block' : 'none';
+    resourceOverlayBtn.style.background = resourceOverlayVisible ? 'rgba(80,200,80,0.3)' : 'rgba(255,255,255,0.1)';
+    if (!resourceOverlayVisible) {
+      const ctx = resourceOverlayCanvas.getContext('2d');
+      ctx.clearRect(0, 0, resourceOverlayCanvas.width, resourceOverlayCanvas.height);
+    }
   });
 
   requestAnimationFrame(frame);
