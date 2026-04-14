@@ -42,6 +42,8 @@ export class World {
     this.spatialGrid = new SpatialGrid(WORLD_WIDTH, WORLD_HEIGHT, 4);
     /** Timer for flora slow tick (tracked by main.js) */
     this.floraSlowTimer = 0;
+    /** Current game day — updated by main.js each tick via world.day = time.day */
+    this.day = 1;
   }
 
   /**
@@ -217,7 +219,15 @@ export class World {
         const elev = baseElev + (Math.sin(x * 3.7 + z * 2.3 + this.seed) * 0.5 + 0.5) * 0.06;
 
         const gatherable = type === TileType.GRASS || type === TileType.WOODLAND || type === TileType.FOREST;
-        tiles[z][x] = { type, x, z, elevation: elev, resource: 1.0, depletionLevel: gatherable ? 0.0 : undefined };
+        // CAD-211: Forest tiles get a tree lifecycle — initial age spread so not all trees are the same stage
+        const isForest = type === TileType.FOREST;
+        const initTreeAge = isForest ? Math.floor(Math.sin(x * 71.3 + z * 53.7) * 0.5 + 0.5) * 250 : undefined;
+        tiles[z][x] = {
+          type, x, z, elevation: elev, resource: 1.0,
+          depletionLevel: gatherable ? 0.0 : undefined,
+          treeAge:   initTreeAge,
+          treeStage: isForest ? World._treeStageFromAge(initTreeAge) : undefined,
+        };
       }
     }
 
@@ -468,12 +478,28 @@ export class World {
   /**
    * Movement energy cost multiplier for a tile.
    * River tiles cost 1.8x energy without rope_bridge knowledge, 1.0x with it.
+   * Desert tiles cost 1.5x energy (slow going through sand).
    */
   traversalCost(x, z, knowledge) {
     const tile = this.getTile(x, z);
     if (!tile) return 1.0;
     if (tile.river) return knowledge.has('rope_bridge') ? 1.0 : 1.8;
+    if (tile.type === TileType.DESERT) return 1.5;
     return 1.0;
+  }
+
+  /**
+   * Season derived from the current game day (modulo 365).
+   * 0–90 = winter, 91–180 = spring, 181–270 = summer, 271–364 = autumn.
+   * Returns a lowercase string: 'winter' | 'spring' | 'summer' | 'autumn'.
+   * @type {string}
+   */
+  get season() {
+    const dayOfYear = (this.day - 1) % 365;
+    if (dayOfYear < 91)  return 'winter';
+    if (dayOfYear < 181) return 'spring';
+    if (dayOfYear < 271) return 'summer';
+    return 'autumn';
   }
 
   /** True if any of the 4 orthogonal neighbours is the given tile type */
@@ -520,6 +546,20 @@ export class World {
   /** True when a tile's depletion exceeds the exhaustion threshold. */
   static isDepleted(tile) {
     return tile.depletionLevel !== undefined && tile.depletionLevel > 0.7;
+  }
+
+  /**
+   * CAD-211 — Derive tree lifecycle stage from age (in game-days).
+   * seedling: 0-5, sapling: 5-30, mature: 30-200, old: 200+.
+   * (dead trees are represented by tile.treeCut or _rng-seeded dead tiles in TerrainRenderer.)
+   * @param {number} age - tree age in game-days
+   * @returns {'seedling'|'sapling'|'mature'|'old'}
+   */
+  static _treeStageFromAge(age) {
+    if (age < 5)   return 'seedling';
+    if (age < 30)  return 'sapling';
+    if (age < 200) return 'mature';
+    return 'old';
   }
 
   /** Returns a list of walkable spawn positions (tile centres) */
@@ -640,6 +680,13 @@ export class World {
         // Winter: grassland depletionLevel increases slightly
         if (season === 'winter' && tile.type === TileType.GRASS) {
           tile.depletionLevel = Math.min(0.3, tile.depletionLevel + 0.005 * (delta / 10));
+        }
+
+        // CAD-211: Increment tree age on living FOREST tiles (delta is game-seconds, convert to days)
+        if (tile.type === TileType.FOREST && tile.treeAge !== undefined && !tile.treeCut) {
+          // floraSlowTick delta is game-seconds; dayLength is 120s → divide to get days elapsed
+          tile.treeAge += delta / 120;
+          tile.treeStage = World._treeStageFromAge(tile.treeAge);
         }
       }
     }
