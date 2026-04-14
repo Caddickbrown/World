@@ -136,7 +136,7 @@ export class Agent {
 
   // ── Main tick ─────────────────────────────────────────────────────────
 
-  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null) {
+  tick(delta, world, allAgents, conceptGraph, weatherMult = 1.0, itemDefs = null, season = null) {
     this.age += delta;
 
     // Starvation: track time at zero hunger, die after 15 game-sec
@@ -226,6 +226,8 @@ export class Agent {
     // Store for use in _decideAction
     this._lastWeatherMult = envMult;
     this._itemDefs = itemDefs;
+    this._season = season;
+
 
     // Fire-lighting: cold agent who knows fire will light a campfire on their tile
     if (hasFire && envMult >= 1.2 && this._fireCooldown <= 0) {
@@ -453,17 +455,46 @@ export class Agent {
       }
     }
 
+    // Collect candidate tiles and score them by seasonal preference
+    const candidates = [];
     for (let attempt = 0; attempt < 25; attempt++) {
       const tx = Math.floor(this.x) + Math.floor(Math.random() * radius * 2 + 1) - radius;
       const tz = Math.floor(this.z) + Math.floor(Math.random() * radius * 2 + 1) - radius;
       if (world.canTraverse(tx, tz, this.knowledge)) {
-        this.targetX = tx + 0.5;
-        this.targetZ = tz + 0.5;
-        return;
+        const tile = world.getTile(tx, tz);
+        const score = tile ? this._seasonalTileScore(tile, this._season) : 1.0;
+        candidates.push({ tx, tz, score });
       }
+    }
+    if (candidates.length > 0) {
+      // Weighted random selection by seasonal score
+      const totalScore = candidates.reduce((sum, c) => sum + c.score, 0);
+      let roll = Math.random() * totalScore;
+      for (const c of candidates) {
+        roll -= c.score;
+        if (roll <= 0) {
+          this.targetX = c.tx + 0.5;
+          this.targetZ = c.tz + 0.5;
+          return;
+        }
+      }
+      // Fallback to last candidate
+      const last = candidates[candidates.length - 1];
+      this.targetX = last.tx + 0.5;
+      this.targetZ = last.tz + 0.5;
+      return;
     }
     this.targetX = this.x;
     this.targetZ = this.z;
+  }
+
+  /** Score a tile for seasonal preference (0.5–1.5). Winter biases toward warm tiles. */
+  _seasonalTileScore(tile, season) {
+    if (season !== 'Winter') return 1.0;
+    const t = tile.type;
+    if (t === TileType.GRASS || t === TileType.WOODLAND) return 1.3;
+    if (t === TileType.MOUNTAIN || t === TileType.STONE) return 0.4;
+    return 1.0;
   }
 
   _pickGatherTarget(world) {
