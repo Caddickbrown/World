@@ -122,6 +122,9 @@ export class Agent {
   /** Gathering efficiency multiplier — elderly agents gather less */
   get gatherMult() { return this.isElderly ? 0.8 : 1.0; }
 
+  /** True while the agent has post-infection immunity */
+  get isImmune() { return this.immuneTimer > 0; }
+
   _adoptTask(allAgents) {
     if (this.task || !this.knowledge.has('organisation')) return;
     const tasks = Object.keys(Agent.TASKS);
@@ -148,6 +151,19 @@ export class Agent {
       }
     } else {
       this.starvationTimer = 0;
+    }
+
+    // Disease: tick infection and immunity timers
+    if (this.immuneTimer > 0) this.immuneTimer -= delta;
+    if (this.infected) {
+      this.infectionTimer += delta;
+      this.health = Math.max(0, this.health - 0.0005 * delta);
+      this.needs.energy = Math.max(0, this.needs.energy - 0.001 * delta);
+      if (this.infectionTimer >= 60) {
+        this.infected = false;
+        this.infectionTimer = 0;
+        this.immuneTimer = 120;
+      }
     }
 
     if (this.knowledge.has('organisation') && !this.task) this._adoptTask(allAgents);
@@ -490,6 +506,8 @@ export class Agent {
       const dist = Math.hypot(this.x - other.x, this.z - other.z);
       if (dist < 5.0) {
         conceptGraph.trySpread(this, other, SOCIAL_COOLDOWN);
+        // Disease spreading
+        this._trySpreadInfection(other);
         if (dist < 3.5) this._tryReproduce(other, conceptGraph);
       }
     }
@@ -513,6 +531,29 @@ export class Agent {
     const cx = (this.x + other.x) / 2 + (Math.random() - 0.5) * 1.5;
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
     conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name });
+  }
+
+  // ── Disease spreading ──────────────────────────────────────────────────
+
+  _trySpreadInfection(other) {
+    // Spread from this -> other
+    if (this.infected && !other.infected && !other.isImmune) {
+      let chance = 0.15;
+      if (other.knowledge.has('medicine')) chance *= 0.5;
+      if (Math.random() < chance) {
+        other.infected = true;
+        other.infectionTimer = 0;
+      }
+    }
+    // Spread from other -> this
+    if (other.infected && !this.infected && !this.isImmune) {
+      let chance = 0.15;
+      if (this.knowledge.has('medicine')) chance *= 0.5;
+      if (Math.random() < chance) {
+        this.infected = true;
+        this.infectionTimer = 0;
+      }
+    }
   }
 
   // ── Inventory actions ─────────────────────────────────────────────────
