@@ -37,9 +37,20 @@ export class Agent {
     this.state = AgentState.WANDERING;
     this.knowledge = new Set();   // set of concept IDs
 
-    this.curiosity  = 0.3 + Math.random() * 0.5;
+    /** Personality traits — 0.0 to 1.0 */
+    this.personality = {
+      curiosity:       0.3 + Math.random() * 0.5,   // drives exploration and discovery
+      sociability:     0.2 + Math.random() * 0.6,   // drives social interactions
+      industriousness: 0.3 + Math.random() * 0.5,   // drives gathering and crafting
+      courage:         0.2 + Math.random() * 0.6,   // drives hunting and risk-taking
+      creativity:      0.2 + Math.random() * 0.6,   // drives art and innovation
+      caution:         0.2 + Math.random() * 0.6,   // drives defensive and careful behaviour
+    };
     this.age        = 0;
     this.health     = 1.0;
+
+    /** Life stage: 'infant' | 'child' | 'adult' | 'elder' */
+    this.lifeStage = 'infant';
     this.maxAge     = 180 + Math.random() * 180; // game-seconds (die of old age)
 
     this.restTimer    = 0;
@@ -122,6 +133,46 @@ export class Agent {
   /** Gathering efficiency multiplier — elderly agents gather less */
   get gatherMult() { return this.isElderly ? 0.8 : 1.0; }
 
+  /** Backward-compatible curiosity accessor */
+  get curiosity() { return this.personality.curiosity; }
+
+  /** Social interaction multiplier based on personality */
+  get socialMult() { return 0.7 + this.personality.sociability * 0.6; }
+
+  /** Discovery multiplier based on personality */
+  get discoveryMult() { return 0.8 + this.personality.curiosity * 0.4; }
+
+  /** Life stage modifiers affecting speed, gathering, social, and reproduction */
+  get lifeStageModifiers() {
+    switch (this.lifeStage) {
+      case 'infant': return { speedMult: 0.5, gatherMult: 0.3, socialMult: 0.5, canReproduce: false, teachable: true };
+      case 'child':  return { speedMult: 0.8, gatherMult: 0.6, socialMult: 1.2, canReproduce: false, teachable: true };
+      case 'adult':  return { speedMult: 1.0, gatherMult: 1.0, socialMult: 1.0, canReproduce: true, teachable: true };
+      case 'elder':  return { speedMult: 0.65, gatherMult: 0.75, socialMult: 1.3, canReproduce: false, teachable: true };
+      default:       return { speedMult: 1.0, gatherMult: 1.0, socialMult: 1.0, canReproduce: true, teachable: true };
+    }
+  }
+
+  _updateLifeStage() {
+    const ratio = this.age / this.lifeExpectancy;
+    if (ratio < 0.12)      this.lifeStage = 'infant';
+    else if (ratio < 0.25) this.lifeStage = 'child';
+    else if (ratio < 0.75) this.lifeStage = 'adult';
+    else                   this.lifeStage = 'elder';
+  }
+
+  /** Generate offspring personality from two parents */
+  static inheritPersonality(parentA, parentB) {
+    const traits = ['curiosity', 'sociability', 'industriousness', 'courage', 'creativity', 'caution'];
+    const child = {};
+    for (const t of traits) {
+      const parentVal = (parentA.personality[t] + parentB.personality[t]) / 2;
+      const mutation = (Math.random() - 0.5) * 0.2;
+      child[t] = Math.max(0, Math.min(1, parentVal + mutation));
+    }
+    return child;
+  }
+
   /** True while the agent has post-infection immunity */
   get isImmune() { return this.immuneTimer > 0; }
 
@@ -131,7 +182,22 @@ export class Agent {
     const taken = new Set(allAgents.filter(a => a.task).map(a => a.task));
     const available = tasks.filter(t => !taken.has(t));
     const pool = available.length > 0 ? available : tasks;
-    this.task = pool[Math.floor(Math.random() * pool.length)];
+
+    // Personality-weighted task selection
+    const weights = pool.map(t => {
+      if (t === 'gatherer') return 0.5 + this.personality.industriousness;
+      if (t === 'teacher')  return 0.5 + this.personality.sociability;
+      if (t === 'scout')    return 0.5 + this.personality.curiosity;
+      if (t === 'carer')    return 0.5 + this.personality.caution;
+      return 1.0;
+    });
+    const totalW = weights.reduce((s, w) => s + w, 0);
+    let roll = Math.random() * totalW;
+    for (let i = 0; i < pool.length; i++) {
+      roll -= weights[i];
+      if (roll <= 0) { this.task = pool[i]; return; }
+    }
+    this.task = pool[pool.length - 1];
   }
 
   // ── Main tick ─────────────────────────────────────────────────────────
@@ -183,9 +249,11 @@ export class Agent {
       return; // dead of old age
     }
 
-    // Maturity
-    if (!this.isAdult && this.age >= 40) this.isAdult = true;
+    // Life stage and maturity
+    this._updateLifeStage();
+    this.isAdult = (this.lifeStage === 'adult' || this.lifeStage === 'elder');
     if (this.reproductionCooldown > 0) this.reproductionCooldown -= delta;
+    if (!this.lifeStageModifiers.canReproduce) this.reproductionCooldown = Math.max(this.reproductionCooldown, 5);
 
     // Weather protection: fire, shelter, and clothing reduce harsh-weather energy penalty
     let envMult = weatherMult;
@@ -543,7 +611,7 @@ export class Agent {
   _trySocialise(delta, allAgents, conceptGraph) {
     this.socialTimer -= delta;
     if (this.socialTimer > 0) return;
-    this.socialTimer = SOCIAL_COOLDOWN + Math.random() * 2;
+    this.socialTimer = (SOCIAL_COOLDOWN + Math.random() * 2) * (1 / this.socialMult);
 
     for (const other of allAgents) {
       if (other === this || other.health <= 0) continue;
