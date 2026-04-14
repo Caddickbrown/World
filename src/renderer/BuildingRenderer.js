@@ -6,6 +6,8 @@ import { TerrainRenderer } from './TerrainRenderer.js';
 const RANK = {
   temple: 45,
   church: 42,
+  workshop: 35,
+  shrine: 32,
   tree_house: 30,
   barn: 24,
   coop: 22,
@@ -17,10 +19,16 @@ const RANK = {
 const MAX_TEMPLES  = 2;
 /** Max church meshes on the map (rare landmark, not every hut). */
 const MAX_CHURCHES = 4;
+/** Max workshop meshes — crafting stations scattered through settlements. */
+const MAX_WORKSHOPS = 3;
+/** Max shrine meshes — cultural landmarks placed by artful communities. */
+const MAX_SHRINES = 3;
 /** Max barn meshes — working farm buildings scattered across the land. */
 const MAX_BARNS    = 2;
 /** Max coop meshes — small chicken shelters near settled areas. */
 const MAX_COOPS    = 3;
+/** Minimum tile distance between buildings of the same concept-combo type. */
+const MIN_PROXIMITY = 5;
 
 function tileHash(tx, tz) {
   return (tx * 31 + tz * 17) >>> 0;
@@ -34,9 +42,19 @@ export class BuildingRenderer {
     this._buildings = new Map();
   }
 
+  /** Check if a building of the given kind already exists within `radius` tiles of (tx,tz). */
+  _hasNearby(kind, tx, tz, radius = MIN_PROXIMITY) {
+    for (const [key, entry] of this._buildings) {
+      if (entry.kind !== kind) continue;
+      const [bx, bz] = key.split(',').map(Number);
+      if (Math.abs(bx - tx) + Math.abs(bz - tz) < radius) return true;
+    }
+    return false;
+  }
+
   /**
    * Scan sleeping agents and place / upgrade buildings on their tile.
-   * Priority: temple > church (capped) > tree_house > housing > hut.
+   * Priority: temple > church > workshop > shrine > tree_house > housing > hut.
    */
   checkAgents(agents) {
     /** @type {Map<string, { rank: number, kind: string, tileType: string }>} */
@@ -63,6 +81,12 @@ export class BuildingRenderer {
       } else if (agent.knowledge.has('church') && agent.knowledge.has('housing')) {
         rank = RANK.church;
         kind = 'church';
+      } else if (agent.knowledge.has('stone_tools') && agent.knowledge.has('weaving') && !this._hasNearby('workshop', tx, tz)) {
+        rank = RANK.workshop;
+        kind = 'workshop';
+      } else if (agent.knowledge.has('art') && agent.knowledge.has('community') && !this._hasNearby('shrine', tx, tz)) {
+        rank = RANK.shrine;
+        kind = 'shrine';
       } else if (
         tile.type === TileType.FOREST &&
         agent.knowledge.has('tree_house')
@@ -121,6 +145,34 @@ export class BuildingRenderer {
       }
     }
 
+    // Cap workshop visuals
+    const workshopKeys = [...best.entries()]
+      .filter(([, v]) => v.kind === 'workshop')
+      .map(([k]) => k)
+      .sort();
+    if (workshopKeys.length > MAX_WORKSHOPS) {
+      for (const key of workshopKeys.slice(MAX_WORKSHOPS)) {
+        const [tx, tz] = key.split(',').map(Number);
+        const h = tileHash(tx, tz);
+        const tileType = best.get(key).tileType;
+        best.set(key, { rank: RANK.housing, kind: `house_${h % 4}`, tileType });
+      }
+    }
+
+    // Cap shrine visuals
+    const shrineKeys = [...best.entries()]
+      .filter(([, v]) => v.kind === 'shrine')
+      .map(([k]) => k)
+      .sort();
+    if (shrineKeys.length > MAX_SHRINES) {
+      for (const key of shrineKeys.slice(MAX_SHRINES)) {
+        const [tx, tz] = key.split(',').map(Number);
+        const h = tileHash(tx, tz);
+        const tileType = best.get(key).tileType;
+        best.set(key, { rank: RANK.housing, kind: `house_${h % 4}`, tileType });
+      }
+    }
+
     // Cap barn visuals
     const barnKeys = [...best.entries()]
       .filter(([, v]) => v.kind === 'barn')
@@ -171,6 +223,8 @@ export class BuildingRenderer {
 
     if (kind === 'church') group = this._makeChurch(tx, tz, surfY);
     else if (kind === 'temple') group = this._makeTemple(tx, tz, surfY);
+    else if (kind === 'workshop') group = this._makeWorkshop(tx, tz, surfY);
+    else if (kind === 'shrine') group = this._makeShrine(tx, tz, surfY);
     else if (kind === 'tree_house') group = this._makeTreeHouse(tx, tz, surfY);
     else if (kind === 'barn') group = this._makeBarn(tx, tz, surfY);
     else if (kind === 'coop') group = this._makeCoop(tx, tz, surfY);
@@ -372,6 +426,88 @@ export class BuildingRenderer {
     );
     crossH.position.set(cx, surfY + 0.55 + 0.5 + 0.12, cz + 0.35);
     group.add(crossV, crossH);
+    return group;
+  }
+
+  /** Workshop — open-sided structure with workbench and anvil, built by agents with stone_tools + weaving. */
+  _makeWorkshop(tx, tz, surfY) {
+    const cx = tx * TILE_SIZE + TILE_SIZE / 2;
+    const cz = tz * TILE_SIZE + TILE_SIZE / 2;
+    const group = new THREE.Group();
+
+    // Foundation slab
+    const baseMat = new THREE.MeshLambertMaterial({ color: 0x7a6a58 });
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.06, 0.85), baseMat);
+    base.position.set(cx, surfY + 0.03, cz);
+    group.add(base);
+
+    // Four corner posts
+    const postMat = new THREE.MeshLambertMaterial({ color: 0x5a3a20 });
+    for (const [dx, dz] of [[-0.38, -0.30], [0.38, -0.30], [-0.38, 0.30], [0.38, 0.30]]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.55, 6), postMat);
+      post.position.set(cx + dx, surfY + 0.06 + 0.275, cz + dz);
+      post.castShadow = true;
+      group.add(post);
+    }
+
+    // Lean-to roof
+    const roofMat = new THREE.MeshLambertMaterial({ color: 0x8a6030 });
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 0.78), roofMat);
+    roof.position.set(cx, surfY + 0.06 + 0.55 + 0.03, cz);
+    roof.rotation.x = 0.15;
+    roof.castShadow = true;
+    group.add(roof);
+
+    // Workbench
+    const benchMat = new THREE.MeshLambertMaterial({ color: 0x9a7a50 });
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.08, 0.25), benchMat);
+    bench.position.set(cx - 0.1, surfY + 0.06 + 0.28, cz);
+    group.add(bench);
+
+    // Anvil shape (small dark block)
+    const anvilMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
+    const anvil = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.10, 0.08), anvilMat);
+    anvil.position.set(cx + 0.28, surfY + 0.06 + 0.05, cz + 0.05);
+    group.add(anvil);
+
+    return group;
+  }
+
+  /** Shrine — a small stone pedestal with a decorative totem, built by agents with art + community. */
+  _makeShrine(tx, tz, surfY) {
+    const cx = tx * TILE_SIZE + TILE_SIZE / 2;
+    const cz = tz * TILE_SIZE + TILE_SIZE / 2;
+    const group = new THREE.Group();
+
+    // Circular stone base
+    const baseMat = new THREE.MeshLambertMaterial({ color: 0xb0a898 });
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.40, 0.45, 0.10, 8), baseMat);
+    base.position.set(cx, surfY + 0.05, cz);
+    base.castShadow = true;
+    group.add(base);
+
+    // Stone pedestal
+    const pedMat = new THREE.MeshLambertMaterial({ color: 0xc8c0b0 });
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.30, 6), pedMat);
+    pedestal.position.set(cx, surfY + 0.10 + 0.15, cz);
+    pedestal.castShadow = true;
+    group.add(pedestal);
+
+    // Totem / idol on top — colourful to reflect 'art'
+    const totemMat = new THREE.MeshLambertMaterial({ color: 0xd4583a });
+    const totem = new THREE.Mesh(new THREE.ConeGeometry(0.10, 0.25, 5), totemMat);
+    totem.position.set(cx, surfY + 0.10 + 0.30 + 0.125, cz);
+    totem.castShadow = true;
+    group.add(totem);
+
+    // Small offering stones around the base
+    const stoneMat = new THREE.MeshLambertMaterial({ color: 0x8a8078 });
+    for (const [dx, dz] of [[0.28, 0.12], [-0.25, 0.18], [0.10, -0.30]]) {
+      const stone = new THREE.Mesh(new THREE.SphereGeometry(0.06, 4, 3), stoneMat);
+      stone.position.set(cx + dx, surfY + 0.03, cz + dz);
+      group.add(stone);
+    }
+
     return group;
   }
 
