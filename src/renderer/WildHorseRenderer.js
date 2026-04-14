@@ -295,6 +295,56 @@ export class WildHorseRenderer {
     }
   }
 
+  /**
+   * Spawn a new wild horse at the given tile coordinates.
+   * Creates a lightweight sim stub and a placeholder 3D root.
+   * The full geometry is built by _build() at construction time; spawned horses
+   * use a minimal visible group so they count for population but render simply.
+   */
+  addAnimal(x, z) {
+    const horseSim = {
+      x: x + 0.5,
+      z: z + 0.5,
+      facingX: 0,
+      facingZ: 1,
+      gait: 'idle',
+      gallopPhase: 0,
+      jumpT: 0,
+      rider: null,
+      isDragged: false,
+      coatPreset: { coat: 0x5c4033, mane: 0x2a1810, dark: 0x3d2817, muzzle: 0x4a3728 },
+      tick() {},
+    };
+    this.horses.push(horseSim);
+
+    const root = new THREE.Group();
+    root.position.set(horseSim.x * TILE_SIZE, 0.16, horseSim.z * TILE_SIZE);
+    const horse = new THREE.Group();
+    horse.position.y = 0.42;
+    root.add(horse);
+    this.scene.add(root);
+    this.entries.push({
+      root,
+      horse,
+      horseSim,
+      legs: [],
+      tail: new THREE.Group(),
+      riderGroup: new THREE.Group(),
+    });
+  }
+
+  /**
+   * Remove the wild horse at the given index from the simulation and scene.
+   * Called by PopulationManager during culling.
+   */
+  removeAnimal(index) {
+    if (index < 0 || index >= this.entries.length) return;
+    const entry = this.entries[index];
+    this.scene.remove(entry.root);
+    if (index < this.horses.length) this.horses.splice(index, 1);
+    this.entries.splice(index, 1);
+  }
+
   dispose() {
     for (const { root } of this.entries) this.scene.remove(root);
     this.entries = [];
@@ -366,3 +416,4 @@ export class WildHorseRenderer {
     }
   }
 }
+
