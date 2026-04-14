@@ -209,5 +209,68 @@
         "metal_tools"
       ]
     }
+  },
+  {
+    "id": "stone_tool",
+    "name": "Stone Tool",
+    "category": "tool",
+    "icon": "\ud83e\ude93",
+    "weight": 1.5,
+    "stackSize": 1,
+    "craftFrom": [
+      "stone",
+      "wood"
+    ],
+    "knowledge": [
+      "stone_tools"
+    ],
+    "effects": {
+      "gatherMult": 1.3,
+      "activities": [
+        "woodcutting",
+        "mining",
+        "hunting"
+      ]
+    }
+  },
+  {
+    "id": "fishing_rod",
+    "name": "Fishing Rod",
+    "category": "tool",
+    "icon": "\ud83c\udfa3",
+    "weight": 1.0,
+    "stackSize": 1,
+    "craftFrom": [
+      "wood"
+    ],
+    "knowledge": [
+      "fishing"
+    ],
+    "effects": {
+      "gatherMult": 1.2,
+      "activities": [
+        "fishing"
+      ]
+    }
+  },
+  {
+    "id": "rope",
+    "name": "Rope",
+    "category": "tool",
+    "icon": "\ud83e\udea2",
+    "weight": 0.5,
+    "stackSize": 3,
+    "craftFrom": [
+      "plant_fibre"
+    ],
+    "knowledge": [
+      "weaving"
+    ],
+    "effects": {
+      "activities": [
+        "river_crossing",
+        "raft"
+      ]
+    }
   }
 ]
