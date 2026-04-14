@@ -233,6 +233,73 @@ export class TerrainRenderer {
       }
     }
 
+    // ── Fruit berries on WOODLAND and FOREST bush tiles ───────────────────
+    // ~30% of WOODLAND tiles get red berries; ~30% of FOREST get dark-blue berries.
+    // Uses seeded RNG (offsets 200+) so placement is stable across redraws.
+    {
+      const addFruitBerries = (tileList, color, seedOffset, surfY) => {
+        // Filter to ~30% of tiles with fruit, stable via RNG seed
+        const fruitTiles = tileList.filter(t => this._rng(t.x, t.z, seedOffset) < 0.30);
+        if (fruitTiles.length === 0) return;
+
+        // Each tile gets 3-6 berry spheres; expand into individual berry placements
+        const berryPlacements = [];
+        for (const tile of fruitTiles) {
+          const count = 3 + Math.floor(this._rng(tile.x, tile.z, seedOffset + 1) * 4); // 3–6
+          for (let b = 0; b < count; b++) berryPlacements.push({ tile, b });
+        }
+
+        // Bush height estimate (matches bush radius ~0.22 at surface)
+        const bushTopY = surfY + 0.22;
+
+        const berryMesh = this._makeInstanced(
+          new THREE.SphereGeometry(0.05, 5, 5),
+          new THREE.MeshLambertMaterial({ color }),
+          berryPlacements.length,
+        );
+
+        berryPlacements.forEach(({ tile, b }, i) => {
+          // Stable position for this berry using per-berry seed offsets
+          const s = seedOffset + 10 + b * 7;
+          // Cluster within ±0.18 of bush centre, near the top
+          const ox = (this._rng(tile.x, tile.z, s)     - 0.5) * 0.36;
+          const oz = (this._rng(tile.x, tile.z, s + 1) - 0.5) * 0.36;
+          const oy = this._rng(tile.x, tile.z, s + 2) * 0.12; // 0..0.12 above bush top
+
+          // Bush offset within tile (matches GRASS bush placement spread)
+          const bx = (this._rng(tile.x, tile.z, 201) - 0.5) * 1.4;
+          const bz = (this._rng(tile.x, tile.z, 202) - 0.5) * 1.4;
+
+          dummy.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2 + bx + ox,
+            bushTopY + oy,
+            tile.z * TILE_SIZE + TILE_SIZE / 2 + bz + oz,
+          );
+          dummy.scale.setScalar(1);
+          dummy.rotation.set(0, 0, 0);
+          dummy.updateMatrix();
+          berryMesh.setMatrixAt(i, dummy.matrix);
+        });
+        berryMesh.instanceMatrix.needsUpdate = true;
+      };
+
+      // Red berries on WOODLAND
+      addFruitBerries(
+        buckets[TileType.WOODLAND] ?? [],
+        0xcc2200,
+        200,
+        TerrainRenderer.surfaceY(TileType.WOODLAND),
+      );
+
+      // Dark-blue berries on FOREST
+      addFruitBerries(
+        buckets[TileType.FOREST] ?? [],
+        0x330066,
+        210,
+        TerrainRenderer.surfaceY(TileType.FOREST),
+      );
+    }
+
     // ── Trees on FOREST tiles ─────────────────────────────────────────────
     {
       const SURF        = TerrainRenderer.surfaceY(TileType.FOREST);
@@ -252,49 +319,72 @@ export class TerrainRenderer {
         }
 
         // Data-driven tree type definitions
+        // scaleMin/scaleRange: per-tree-type overall scale variation (seeded, stable)
         const TREE_TYPES = [
           { tiles: typeBuckets.pine,
+            scaleMin: 0.75, scaleRange: 0.55,
             trunk: { color: 0x5c3d1a, radT: 0.055, radB: 0.095, h0: 0.90, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
             fol:   { geom: new THREE.ConeGeometry(0.38, 0.65, 7),   color: 0x2d9e52, h0: 0.85, hVar: 0.40, sx0: 0.75, sxVar: 0.35, centerFrac: 0.45, roundCrown: false },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.spruce,
+            scaleMin: 0.80, scaleRange: 0.40,
             trunk: { color: 0x3d2810, radT: 0.050, radB: 0.088, h0: 1.05, hVar: 0.50, hScale: 1.0,  topFrac: 1.0  },
             fol:   { geom: new THREE.ConeGeometry(0.32, 0.80, 8),   color: 0x1e7a3d, h0: 0.90, hVar: 0.45, sx0: 0.62, sxVar: 0.28, centerFrac: 0.50, roundCrown: false },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.oak,
+            scaleMin: 0.70, scaleRange: 0.70,
             trunk: { color: 0x78350f, radT: 0.075, radB: 0.12,  h0: 0.65, hVar: 0.45, hScale: 0.85, topFrac: 0.75 },
             fol:   { geom: new THREE.SphereGeometry(0.38, 7, 5), color: 0x228b45, h0: 0.65, hVar: 0.45, sx0: 0.85, sxVar: 0.70, centerFrac: 0.36, roundCrown: true  },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.birch,
+            scaleMin: 0.60, scaleRange: 0.70,
             trunk: { color: 0xc8c0b0, radT: 0.038, radB: 0.060, h0: 0.78, hVar: 0.40, hScale: 0.88, topFrac: 0.70 },
             fol:   { geom: new THREE.SphereGeometry(0.30, 6, 5), color: 0x8ab548, h0: 0.52, hVar: 0.38, sx0: 0.68, sxVar: 0.52, centerFrac: 0.33, roundCrown: true  },
             lush: [0.08, 0.50, 0.24], sparse: [0.30, 0.40, 0.20] },
           { tiles: typeBuckets.cherry,
+            scaleMin: 0.60, scaleRange: 0.70,
             trunk: { color: 0x9c7b6e, radT: 0.050, radB: 0.080, h0: 0.70, hVar: 0.40, hScale: 0.90, topFrac: 0.78 },
             fol:   { geom: new THREE.SphereGeometry(0.40, 7, 5), color: 0xf9a8d4, h0: 0.60, hVar: 0.50, sx0: 0.90, sxVar: 0.65, centerFrac: 0.38, roundCrown: true  },
             lush: [0.98, 0.66, 0.83], sparse: [0.90, 0.80, 0.85] },
           { tiles: typeBuckets.maple,
+            scaleMin: 0.60, scaleRange: 0.70,
             trunk: { color: 0x6b3d12, radT: 0.080, radB: 0.125, h0: 0.70, hVar: 0.45, hScale: 0.85, topFrac: 0.75 },
             fol:   { geom: new THREE.SphereGeometry(0.44, 7, 5), color: 0xdc6b2f, h0: 0.70, hVar: 0.45, sx0: 0.95, sxVar: 0.65, centerFrac: 0.38, roundCrown: true  },
             lush: [0.86, 0.42, 0.18], sparse: [0.55, 0.38, 0.22] },
         ];
 
-        for (const { tiles, trunk, fol, lush, sparse } of TREE_TYPES) {
+        for (const { tiles, trunk, fol, lush, sparse, scaleMin, scaleRange } of TREE_TYPES) {
           if (tiles.length === 0) continue;
           const placements = this._expandPlacements(tiles);
 
-          // Trunk — static, no resource update
-          this._applyTransforms(placements,
-            this._makeInstanced(new THREE.CylinderGeometry(trunk.radT, trunk.radB, 0.42, 5),
-              new THREE.MeshLambertMaterial({ color: trunk.color }), placements.length),
+          // Trunk — static, no resource update; per-tree scale and colour variation
+          const trunkMesh = this._makeInstanced(new THREE.CylinderGeometry(trunk.radT, trunk.radB, 0.42, 5),
+            new THREE.MeshLambertMaterial({ color: trunk.color }), placements.length);
+          this._applyTransforms(placements, trunkMesh,
             dummy, ({ tile }, rng) => {
-              const sz = 0.60 + rng(36) * 0.70, tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
+              const sz = scaleMin + rng(36) * scaleRange, tH = trunk.h0 + rng(30) * trunk.hVar, tW = 0.75 + rng(31) * 0.5;
               return {
                 pos:   [tile.x * TILE_SIZE + TILE_SIZE/2 + (rng(3) - 0.5) * 2.8, SURF + 0.21 * tH * trunk.hScale * sz, tile.z * TILE_SIZE + TILE_SIZE/2 + (rng(4) - 0.5) * 2.8],
                 scale: [tW * sz, tH * trunk.hScale * sz, tW * sz],
                 rot:   [0, rng(32) * Math.PI * 2, 0],
               };
             });
+          // Per-tree trunk colour: vary brightness ±10% using seeded rng
+          {
+            const baseC = new THREE.Color(trunk.color);
+            const trunkC = new THREE.Color();
+            placements.forEach(({ tile, sub }, i) => {
+              const rng = s => this._rng(tile.x, tile.z, s + sub * 13);
+              const bv = 0.90 + rng(38) * 0.20; // 0.90–1.10 brightness multiplier
+              trunkC.setRGB(
+                Math.min(1, baseC.r * bv),
+                Math.min(1, baseC.g * bv),
+                Math.min(1, baseC.b * bv),
+              );
+              trunkMesh.setColorAt(i, trunkC);
+            });
+            if (trunkMesh.instanceColor) trunkMesh.instanceColor.needsUpdate = true;
+          }
 
           // Foliage — resource-driven color + height
           const fMesh = this._makeInstanced(fol.geom, new THREE.MeshLambertMaterial({ color: fol.color }), placements.length);
@@ -303,7 +393,7 @@ export class TerrainRenderer {
           if (fMesh.instanceColor) fMesh.instanceColor.needsUpdate = true;
 
           const foliageXform = ({ tile }, rng, resource) => {
-            const sz   = 0.60 + rng(36) * 0.70;
+            const sz   = scaleMin + rng(36) * scaleRange;
             const tH   = trunk.h0 + rng(30) * trunk.hVar;
             const tTop = SURF + 0.42 * tH * trunk.hScale * trunk.topFrac * sz;
             const rsc  = 0.5 + resource * 0.5;
@@ -1360,3 +1450,4 @@ export class TerrainRenderer {
     return TILE_HEIGHT[type] ?? 0.14;
   }
 }
+
