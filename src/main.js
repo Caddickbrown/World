@@ -919,6 +919,11 @@ async function init() {
       // Regenerate tile food resources (season-aware)
       world.updateResources(delta, time.season, itemDefs.size > 0 ? itemDefs : null);
 
+      // Tick ground-item spoilage — multiplied by disaster blight if active (CAD-332)
+      if (world.tileItems && itemDefs.size > 0) {
+        world.tileItems.tickSpoilage(delta, itemDefs, disasterSystem.getSpoilageMult());
+      }
+
       // Tick world ecology systems
       world.updateCutTrees(delta);
       world.updateChickenNests(delta);
