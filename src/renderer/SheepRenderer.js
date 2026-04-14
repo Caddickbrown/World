@@ -5,6 +5,10 @@ import { TerrainRenderer } from './TerrainRenderer.js';
 // How many decorative sheep to scatter across the world
 const SHEEP_COUNT = 18;
 
+const FLEE_SPEED       = 1.4;   // tiles/sec when fleeing
+const FLEE_DETECT_DIST = 6;     // tiles — start fleeing at this range
+const WANDER_SPEED     = 0.25;  // tiles/sec (original)
+
 // Seeded pseudo-random (deterministic placement each load)
 function seededRand(seed) {
   let s = seed;
@@ -18,9 +22,16 @@ export class SheepRenderer {
   constructor(scene, world) {
     this.scene = scene;
     this.world = world;
-    this._sheep = []; // { group, bodyMat, homeX, homeZ, phase, facingY }
+    this._sheep = []; // { group, bodyMat, legs, homeX, homeZ, x, z, phase, wanderAngle, wanderTimer, health, isDead }
     this._build();
   }
+
+  /**
+   * Expose sheep in tile-coordinate space for predator interaction.
+   * Each entry has: x, z (tile coords), health, isDead.
+   * Predator.js reads and mutates health/isDead directly.
+   */
+  get sheep() { return this._sheep; }
 
   _build() {
     // Shared geometries for all sheep
@@ -115,6 +126,12 @@ export class SheepRenderer {
         homeX,
         homeZ,
         surfY,
+        // Tile-space position (read by Predator.js for distance checks)
+        x: homeX / TILE_SIZE,
+        z: homeZ / TILE_SIZE,
+        // Game state
+        health: 1.0,
+        isDead: false,
         phase: rand() * Math.PI * 2,
         wanderAngle: rand() * Math.PI * 2,
         wanderTimer: rand() * 4,
@@ -131,24 +148,82 @@ export class SheepRenderer {
     this._legMat   = legMat;
   }
 
-  update(delta) {
+  /**
+   * @param {number} delta
+   * @param {Predator[]} [predators]  - optional array of active predators
+   */
+  update(delta, predators = []) {
     const now = Date.now() * 0.001;
     for (const sheep of this._sheep) {
-      // Slowly drift toward home position with gentle wandering
+      // Dead sheep: fade out and hide
+      if (sheep.isDead) {
+        if (sheep.group.visible) {
+          sheep.group.visible = false;
+        }
+        continue;
+      }
+
+      // ── Flee from nearby predators ──────────────────────────────────────
+      let fleeX = 0;
+      let fleeZ = 0;
+      let isFleeing = false;
+
+      for (const pred of predators) {
+        // Compare in tile space
+        const dx = sheep.x - pred.x;
+        const dz = sheep.z - pred.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist < FLEE_DETECT_DIST && dist > 0.01) {
+          // Flee vector: away from predator, weighted by proximity
+          const weight = 1.0 - dist / FLEE_DETECT_DIST;
+          fleeX += (dx / dist) * weight;
+          fleeZ += (dz / dist) * weight;
+          isFleeing = true;
+        }
+      }
+
+      if (isFleeing) {
+        // Normalise flee vector and apply in 3D world space
+        const mag = Math.hypot(fleeX, fleeZ) || 1;
+        const nx = fleeX / mag;
+        const nz = fleeZ / mag;
+        const moveSpeed = FLEE_SPEED * TILE_SIZE; // convert tiles/sec → world-units/sec
+        sheep.group.position.x += nx * moveSpeed * delta;
+        sheep.group.position.z += nz * moveSpeed * delta;
+        // Sync tile-space coords
+        sheep.x = sheep.group.position.x / TILE_SIZE;
+        sheep.z = sheep.group.position.z / TILE_SIZE;
+        // Face the direction of travel
+        sheep.group.rotation.y = Math.atan2(nx, nz);
+        // Leg animation — faster when fleeing
+        const t = now * 3.5 + sheep.phase;
+        const swing = 0.38 * Math.sin(t);
+        sheep.legs[0].rotation.x =  swing;
+        sheep.legs[3].rotation.x =  swing;
+        sheep.legs[1].rotation.x = -swing;
+        sheep.legs[2].rotation.x = -swing;
+        sheep.group.position.y = sheep.surfY + 0.18;
+        continue;
+      }
+
+      // ── Normal wander ────────────────────────────────────────────────────
       sheep.wanderTimer -= delta;
       if (sheep.wanderTimer <= 0) {
         sheep.wanderAngle += (Math.random() - 0.5) * 1.2;
         sheep.wanderTimer = 2 + Math.random() * 3;
       }
 
-      const speed = 0.25;
       const wx = sheep.homeX + Math.cos(sheep.wanderAngle) * 0.6;
       const wz = sheep.homeZ + Math.sin(sheep.wanderAngle) * 0.6;
       const dx = wx - sheep.group.position.x;
       const dz = wz - sheep.group.position.z;
 
-      sheep.group.position.x += dx * delta * speed;
-      sheep.group.position.z += dz * delta * speed;
+      sheep.group.position.x += dx * delta * WANDER_SPEED;
+      sheep.group.position.z += dz * delta * WANDER_SPEED;
+
+      // Keep tile-space position in sync
+      sheep.x = sheep.group.position.x / TILE_SIZE;
+      sheep.z = sheep.group.position.z / TILE_SIZE;
 
       // Face direction of travel
       if (Math.abs(dx) > 0.001 || Math.abs(dz) > 0.001) {
