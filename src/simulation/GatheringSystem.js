@@ -122,4 +122,31 @@ export class GatheringSystem {
 
     return activities;
   }
+
+  /**
+   * Attempt to cook a raw food item using wood as fuel.
+   * Requires agent to have 'fire' and 'cooking' knowledge.
+   * @param {object} agent - The agent attempting to cook
+   * @param {Map<string,object>} itemDefs - Item definitions keyed by id
+   * @returns {boolean} true if cooking happened
+   */
+  static cook(agent, itemDefs) {
+    if (!agent.knowledge.has('fire') || !agent.knowledge.has('cooking')) return false;
+    if (!agent.inventory.has('wood')) return false;
+
+    // Try to cook fish first, then meat
+    for (const rawId of ['fish', 'meat']) {
+      if (!agent.inventory.has(rawId)) continue;
+
+      const rawDef = itemDefs.get(rawId);
+      if (!rawDef?.cookedId) continue;
+
+      agent.inventory.remove('wood', 1);
+      agent.inventory.remove(rawId, 1);
+      agent.inventory.add(rawDef.cookedId, 1);
+      return true;
+    }
+
+    return false;
+  }
 }
