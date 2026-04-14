@@ -22,7 +22,9 @@ function horseTileOk(world, tx, tz) {
   const tile = world.getTile(tx, tz);
   if (!tile) return false;
   if (!world.isWalkable(tx, tz)) return false;
-  return tile.type === TileType.GRASS || tile.type === TileType.WOODLAND || tile.type === TileType.FOREST;
+  // Horses prefer grass/woodland/forest but can traverse beach at reduced speed
+  return tile.type === TileType.GRASS || tile.type === TileType.WOODLAND ||
+         tile.type === TileType.FOREST || tile.type === TileType.BEACH;
 }
 
 function rotateFacingToward(fx, fz, tx, tz, maxRad) {
@@ -192,8 +194,10 @@ export class WildHorse {
     this.facingZ = f.z;
 
     const speed = this.gait === 'run' ? this.runSpeed : this.walkSpeed;
-    const nx = this.x + this.facingX * speed * delta;
-    const nz = this.z + this.facingZ * speed * delta;
+    const currentTile = world.getTile(Math.floor(this.x), Math.floor(this.z));
+    const beachMult = (currentTile && currentTile.type === TileType.BEACH) ? 0.7 : 1.0;
+    const nx = this.x + this.facingX * speed * beachMult * delta;
+    const nz = this.z + this.facingZ * speed * beachMult * delta;
 
     if (horseTileOk(world, Math.floor(nx), Math.floor(nz))) {
       this.x = nx;
