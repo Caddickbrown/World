@@ -15,6 +15,8 @@ import { BeeRenderer }       from './renderer/BeeRenderer.js';
 import { FlowerRenderer }    from './renderer/FlowerRenderer.js';
 import { TimeSystem }        from './systems/TimeSystem.js';
 import { WeatherSystem }     from './systems/WeatherSystem.js';
+import { MinimapRenderer }   from './renderer/MinimapRenderer.js';
+import { HistoryLog }        from './systems/HistoryLog.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -103,6 +105,14 @@ async function init() {
 
   time = new TimeSystem();
   weather = new WeatherSystem();
+
+  // ── Minimap & History Log ──────────────────────────────────────────────
+  const minimap = new MinimapRenderer(world);
+  const historyLog = new HistoryLog();
+
+  // Display current seed
+  const seedEl = document.getElementById('world-seed');
+  if (seedEl) seedEl.textContent = 'Seed: ' + world.seed;
 
   // ── Fade out loading screen ───────────────────────────────────────────
   const loading = document.getElementById('loading');
@@ -236,6 +246,11 @@ async function init() {
     stats.worldsPlayed++;
     saveStats();
 
+    minimap.world = world;
+    minimap._renderTerrain();
+    historyLog.entries.length = 0;
+    if (seedEl) seedEl.textContent = 'Seed: ' + world.seed;
+
     showNotification('A new world begins...', 'env');
     } catch (e) {
       showError('Reset failed', e);
@@ -244,6 +259,166 @@ async function init() {
 
   document.getElementById('reset-btn').addEventListener('click', resetWorld);
   document.getElementById('game-over-reset').addEventListener('click', resetWorld);
+
+  // ── Seed input UI ─────────────────────────────────────────────────────
+  const seedBtn = document.getElementById('seed-btn');
+  const seedInput = document.getElementById('seed-input');
+  if (seedBtn && seedInput) {
+    seedBtn.addEventListener('click', () => {
+      const val = Number(seedInput.value);
+      if (!isNaN(val) && val >= 0) {
+        // Dispose and rebuild world with custom seed
+        terrainRenderer.dispose();
+        ar.dispose();
+        buildingRenderer.dispose();
+        horseRenderer?.dispose();
+        sheepRenderer?.dispose();
+        highlandCowRenderer?.dispose();
+        butterflyRenderer?.dispose();
+        beeRenderer?.dispose();
+        flowerRenderer?.dispose();
+
+        world = new World(val);
+        world.naturalFires = new Map();
+        lightningCooldown = 0;
+        conceptGraph = new ConceptGraph(conceptsData);
+        agents.length = 0;
+        const startPop = Number(popSlider.value);
+        world.getSpawnPoints(startPop).forEach(p => agents.push(new Agent(p.x, p.z)));
+
+        terrainRenderer = new TerrainRenderer(wr.scene, world);
+        ar = new AgentRenderer(wr.scene, agents, world);
+        buildingRenderer = new BuildingRenderer(wr.scene, world);
+        horses.length = 0;
+        world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
+        horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
+        sheepRenderer     = new SheepRenderer(wr.scene, world);
+        highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
+        butterflyRenderer = new ButterflyRenderer(wr.scene, world);
+        beeRenderer       = new BeeRenderer(wr.scene, world);
+        flowerRenderer    = new FlowerRenderer(wr.scene, world);
+
+        minimap.world = world;
+        minimap._renderTerrain();
+        historyLog.entries.length = 0;
+
+        time.gameTime = (8 / 24) * 120;
+        birthGameTimes.length = 0;
+        weather.current = 'CLEAR';
+        weather._timer  = 0;
+        gameOver = false;
+        if (gameOverAutoResetId) { clearTimeout(gameOverAutoResetId); gameOverAutoResetId = null; }
+        if (selectedAgent) selectedAgent.selected = false;
+        selectedAgent = null;
+        selectedTile  = null;
+        document.getElementById('info-panel').classList.add('hidden');
+        document.getElementById('game-over').classList.add('hidden');
+
+        if (seedEl) seedEl.textContent = 'Seed: ' + world.seed;
+        seedInput.value = '';
+        showNotification('New world from seed ' + val, 'env');
+      }
+    });
+  }
+
+  // ── Save / Load ───────────────────────────────────────────────────────
+  const SAVE_KEY = 'world-save';
+  document.addEventListener('keydown', e => {
+    // Ctrl+S to save
+    if (e.ctrlKey && e.key === 's') {
+      e.preventDefault();
+      try {
+        const saveData = world.serialize(agents, conceptGraph, time.gameTime, { current: weather.current, timer: weather._timer });
+        localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+        showNotification('World saved!', 'env');
+      } catch (err) {
+        console.error('Save failed', err);
+        showNotification('Save failed.', 'env');
+      }
+    }
+    // Ctrl+L to load
+    if (e.ctrlKey && e.key === 'l') {
+      e.preventDefault();
+      try {
+        const raw = localStorage.getItem(SAVE_KEY);
+        if (!raw) { showNotification('No save found.', 'env'); return; }
+        const saveData = JSON.parse(raw);
+
+        terrainRenderer.dispose();
+        ar.dispose();
+        buildingRenderer.dispose();
+        horseRenderer?.dispose();
+        sheepRenderer?.dispose();
+        highlandCowRenderer?.dispose();
+        butterflyRenderer?.dispose();
+        beeRenderer?.dispose();
+        flowerRenderer?.dispose();
+
+        world = World.deserialize(saveData);
+        world.naturalFires = new Map();
+        lightningCooldown = 0;
+        conceptGraph = new ConceptGraph(conceptsData);
+        if (saveData.conceptGraph && conceptGraph.deserialize) {
+          conceptGraph.deserialize(saveData.conceptGraph);
+        }
+        agents.length = 0;
+        if (saveData.agents) {
+          for (const ad of saveData.agents) {
+            const a = new Agent(ad.x, ad.z);
+            a.health = ad.health ?? 1;
+            if (ad.knowledge) ad.knowledge.forEach(k => a.knowledge.add(k));
+            if (ad.inventory?.deserialize) a.inventory.deserialize(ad.inventory);
+            agents.push(a);
+          }
+        }
+
+        terrainRenderer = new TerrainRenderer(wr.scene, world);
+        ar = new AgentRenderer(wr.scene, agents, world);
+        buildingRenderer = new BuildingRenderer(wr.scene, world);
+        horses.length = 0;
+        world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
+        horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
+        sheepRenderer     = new SheepRenderer(wr.scene, world);
+        highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
+        butterflyRenderer = new ButterflyRenderer(wr.scene, world);
+        beeRenderer       = new BeeRenderer(wr.scene, world);
+        flowerRenderer    = new FlowerRenderer(wr.scene, world);
+
+        minimap.world = world;
+        minimap._renderTerrain();
+        historyLog.entries.length = 0;
+
+        if (saveData.gameTime) time.gameTime = saveData.gameTime;
+        if (saveData.weatherState) {
+          weather.current = saveData.weatherState.current ?? 'CLEAR';
+          weather._timer  = saveData.weatherState.timer ?? 0;
+        }
+        birthGameTimes.length = 0;
+        gameOver = false;
+        if (gameOverAutoResetId) { clearTimeout(gameOverAutoResetId); gameOverAutoResetId = null; }
+        if (selectedAgent) selectedAgent.selected = false;
+        selectedAgent = null;
+        selectedTile  = null;
+        document.getElementById('info-panel').classList.add('hidden');
+        document.getElementById('game-over').classList.add('hidden');
+
+        if (seedEl) seedEl.textContent = 'Seed: ' + world.seed;
+        showNotification('World loaded from save!', 'env');
+      } catch (err) {
+        console.error('Load failed', err);
+        showNotification('Load failed.', 'env');
+      }
+    }
+  });
+
+  // ── Minimap toggle (M key) ────────────────────────────────────────────
+  document.addEventListener('keydown', e => {
+    if (e.key === 'm' || e.key === 'M') {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      minimap.visible = !minimap.visible;
+      minimap.canvas.style.display = minimap.visible ? 'block' : 'none';
+    }
+  });
 
   const errDismiss = document.getElementById('error-dismiss');
   if (errDismiss) errDismiss.addEventListener('click', hideError);
@@ -449,6 +624,7 @@ async function init() {
     // ── Game over detection ───────────────────────────────────────────
     if (!gameOver && agents.length > 0 && alive === 0) {
       gameOver = true;
+      historyLog.add('death', 'Civilization has fallen — all people are gone', time.day);
       const discovered = conceptGraph.getDiscoveredConcepts(); // no filter: count all ever discovered
       document.getElementById('game-over-stats').innerHTML =
         `<div>Lasted <strong>Day ${time.day}</strong> — ${time.season}</div>` +
@@ -706,6 +882,7 @@ async function init() {
 
         if (evt.type === 'discovery') {
           showNotification(`${evt.agentName} discovered ${cName}!`, 'social');
+          historyLog.add('discovery', `${evt.agentName} discovered ${cName}`, time.day);
           if (evt.conceptId === 'organisation') {
             const agent = agents.find(a => a.id === evt.agentId);
             if (agent) {
@@ -747,6 +924,7 @@ async function init() {
         ar.addAgent(child);
         birthGameTimes.push(time.gameTime);
         showNotification(`${evt.parentName} has a child — ${child.name}`, 'social');
+        historyLog.add('birth', `${evt.parentName} has a child — ${child.name}`, time.day);
       }
     }
 
@@ -765,6 +943,7 @@ async function init() {
     beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
     flowerRenderer?.update(delta > 0 ? delta : 0, time.season);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
+    minimap.update(agents);
     wr.render();
     updateHUD();
     } catch (e) {
