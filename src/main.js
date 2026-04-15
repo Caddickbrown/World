@@ -30,6 +30,10 @@ import { audio }             from './systems/AudioSystem.js';
 import { RabbitRenderer }   from './renderer/RabbitRenderer.js';
 import { EagleRenderer }    from './renderer/EagleRenderer.js';
 import { EcologySystem }    from './systems/EcologySystem.js';
+import { AnimalSkillSystem } from './systems/AnimalSkillSystem.js';
+import { createFrogs }       from './simulation/Frog.js';
+import { FrogRenderer }      from './renderer/FrogRenderer.js';
+import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -102,6 +106,9 @@ async function init() {
   let rabbitRenderer;
   let eagleRenderer;
   let pigRenderer;
+  let frogRenderer;
+  let insectSwarmRenderer;
+  let frogs = [];
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -125,6 +132,9 @@ async function init() {
   flowerRenderer    = new FlowerRenderer(wr.scene, world);
   rabbitRenderer    = new RabbitRenderer(wr.scene, world);
   eagleRenderer     = new EagleRenderer(wr.scene);
+  frogs             = createFrogs(world);        // CAD-95
+  frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
+  insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
 
   time = new TimeSystem();
   weather = new WeatherSystem(world.width, world.height);
@@ -132,6 +142,7 @@ async function init() {
   // ── Simulation systems ─────────────────────────────────────────────────
   const disasterSystem   = new DisasterSystem();
   const ecologySystem    = new EcologySystem();
+  const animalSkillSystem = new AnimalSkillSystem(); // CAD-87
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
@@ -253,6 +264,8 @@ async function init() {
     rabbitRenderer?.dispose();
     eagleRenderer?.dispose();
     pigRenderer?.dispose();
+    frogRenderer?.dispose();         // CAD-95
+    insectSwarmRenderer?.dispose();  // CAD-92
 
     world = new World();
     world.naturalFires = new Map();
@@ -277,6 +290,10 @@ async function init() {
     flowerRenderer    = new FlowerRenderer(wr.scene, world);
     rabbitRenderer    = new RabbitRenderer(wr.scene, world);
     eagleRenderer     = new EagleRenderer(wr.scene);
+    frogs             = createFrogs(world);         // CAD-95
+    frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
+    insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
+    animalSkillSystem.clear(); // CAD-87
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -334,6 +351,8 @@ async function init() {
         flowerRenderer?.dispose();
         rabbitRenderer?.dispose();
         eagleRenderer?.dispose();
+        frogRenderer?.dispose();
+        insectSwarmRenderer?.dispose();
 
         world = new World(val);
         world.naturalFires = new Map();
@@ -358,6 +377,10 @@ async function init() {
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
         rabbitRenderer    = new RabbitRenderer(wr.scene, world);
         eagleRenderer     = new EagleRenderer(wr.scene);
+        frogs             = createFrogs(world);
+        frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
+        insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
+        animalSkillSystem.clear();
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -419,6 +442,8 @@ async function init() {
         flowerRenderer?.dispose();
         rabbitRenderer?.dispose();
         eagleRenderer?.dispose();
+        frogRenderer?.dispose();
+        insectSwarmRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
@@ -453,6 +478,10 @@ async function init() {
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
         rabbitRenderer    = new RabbitRenderer(wr.scene, world);
         eagleRenderer     = new EagleRenderer(wr.scene);
+        frogs             = createFrogs(world);
+        frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
+        insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
+        animalSkillSystem.clear();
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -1117,6 +1146,12 @@ async function init() {
       const sheepArr = sheepRenderer ? sheepRenderer.sheep : [];
       for (const pred of predators) pred.tick(delta, agents, world, sheepArr);
 
+      // CAD-87: Tick animal skill system (passive growth)
+      animalSkillSystem.tick(delta);
+
+      // CAD-95: Tick frogs
+      for (const frog of frogs) frog.tick(delta, world);
+
       // Handle agent-lit campfires
       if (world.campfireEvents?.length) {
         for (const evt of world.campfireEvents) {
@@ -1344,8 +1379,10 @@ async function init() {
     butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
     beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
     flowerRenderer?.update(delta > 0 ? delta : 0, time.season);
-    rabbitRenderer?.update(delta > 0 ? delta : 0);
+    rabbitRenderer?.update(delta > 0 ? delta : 0, agents); // CAD-195 fear
     eagleRenderer?.update(delta > 0 ? delta : 0);
+    frogRenderer?.update(delta > 0 ? delta : 0);          // CAD-95
+    insectSwarmRenderer?.update(delta > 0 ? delta : 0);   // CAD-92
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
     wr.render();
