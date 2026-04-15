@@ -1558,6 +1558,32 @@
     }
   },
   {
+    "id": "conservation",
+    "name": "Conservation",
+    "era": 3,
+    "icon": "\ud83c\udf3f",
+    "description": "Understanding that balance in nature protects future generations — caring for species on the edge of extinction.",
+    "prerequisites": [
+      "ecology",
+      "community"
+    ],
+    "discovery_conditions": [
+      {
+        "type": "has_concept",
+        "value": "ecology"
+      },
+      {
+        "type": "has_concept",
+        "value": "community"
+      }
+    ],
+    "discovery_probability": 0.00025,
+    "spread_rate": 0.04,
+    "effects": {
+      "enables_reintroduction": true
+    }
+  },
+  {
     "id": "architecture",
     "name": "Architecture",
     "era": 4,

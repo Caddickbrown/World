@@ -36,6 +36,7 @@ import { FrogRenderer }      from './renderer/FrogRenderer.js';
 import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
 import { RainbowRenderer }    from './renderer/RainbowRenderer.js';
 import { FishShoal, initFishShoals } from './simulation/FishShoal.js';
+import { PopulationManager } from './simulation/PopulationManager.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -150,6 +151,9 @@ async function init() {
 
   // CAD-197: Fish shoals — 3-5 shoals in shallow water zones
   let fishShoals = initFishShoals(world);
+
+  // CAD-192: Population manager — tracks extinctions and carries reintroduction logic
+  const populationManager = new PopulationManager(world);
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
@@ -306,6 +310,11 @@ async function init() {
 
     // CAD-197: reinitialise fish shoals for new world
     fishShoals = initFishShoals(world);
+
+    // CAD-192: reset population manager state for new world
+    populationManager.world = world;
+    populationManager.extinct.clear();
+    populationManager._horsesEverSpawned = false;
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -1155,6 +1164,25 @@ async function init() {
       world.updateCows(delta);
       world.updateGlaciers(delta, weather.temperature ?? 20);
       world.updateDomestication(delta, buildingRenderer?.buildings ?? []);
+
+      // CAD-192: Tick population manager (reproduction, culling, extinction tracking)
+      populationManager.tick(delta, sheepRenderer, horseRenderer, predators, world);
+
+      // CAD-192: Agents with conservation concept attempt reintroduction of extinct species
+      if (populationManager.extinct.size > 0) {
+        for (const agent of agents) {
+          if (agent?.health > 0 && agent.knowledge.has('conservation')) {
+            for (const species of [...populationManager.extinct]) {
+              const success = populationManager.reintroduce(species);
+              if (success) {
+                showNotification(`${agent.name} reintroduces ${species} to the world!`, 'env');
+                historyLog.add('ecology', `${agent.name} reintroduced ${species} via conservation`, time.day);
+                break;
+              }
+            }
+          }
+        }
+      }
 
       // CAD-197: Tick fish shoals (boids movement + replenishment)
       for (const shoal of fishShoals) shoal.tick(delta, world);
