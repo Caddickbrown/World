@@ -46,6 +46,10 @@ export class World {
     this.floraSlowTimer = 0;
     /** Current game day — updated by main.js each tick via world.day = time.day */
     this.day = 1;
+    /** CAD-177: Trade traffic map — {x_y: count} — how many times traders traversed each tile */
+    this._tradeTraffic = {};
+    /** CAD-177: Last day traffic was decayed */
+    this._trafficLastDecayDay = 0;
   }
 
   /**
@@ -84,6 +88,20 @@ export class World {
         nest.eggs++;
         nest.layTimer = 20 + Math.random() * 15;
       }
+    }
+  }
+
+  /**
+   * CAD-177: Decay trade traffic counts. Paths fade if not used for 60+ days.
+   * Called once per day tick.
+   * @param {number} currentDay
+   */
+  decayTradeTraffic(currentDay) {
+    if (currentDay - this._trafficLastDecayDay < 1) return;
+    this._trafficLastDecayDay = currentDay;
+    for (const key of Object.keys(this._tradeTraffic)) {
+      this._tradeTraffic[key] *= 0.98; // slow decay each day
+      if (this._tradeTraffic[key] < 0.5) delete this._tradeTraffic[key];
     }
   }
 

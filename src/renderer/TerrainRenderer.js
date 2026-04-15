@@ -1807,6 +1807,71 @@ export class TerrainRenderer {
     this._snowMeshes = [snowMesh];
   }
 
+  /**
+   * CAD-177: Render worn trade path overlays on tiles with tradeTraffic > 5.
+   * Called from main.js after terrain is built. Updates or creates path meshes.
+   * Paths fade if not used for 60+ days (traffic decays in World.decayTradeTraffic).
+   */
+  updateTradePaths() {
+    // Remove old path meshes
+    if (this._tradePathMeshes) {
+      for (const m of this._tradePathMeshes) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+      }
+    }
+    this._tradePathMeshes = [];
+
+    const traffic = this.world._tradeTraffic;
+    if (!traffic) return;
+
+    const pathTiles = [];
+    for (const [key, count] of Object.entries(traffic)) {
+      if (count < 5) continue;
+      const [xs, zs] = key.split('_');
+      const x = parseInt(xs, 10);
+      const z = parseInt(zs, 10);
+      const tile = this.world.getTile(x, z);
+      if (tile) pathTiles.push({ tile, count });
+    }
+    if (pathTiles.length === 0) return;
+
+    const dummy = new THREE.Object3D();
+    const pathGeom = new THREE.PlaneGeometry(TILE_SIZE * 0.45, TILE_SIZE * 0.45);
+    const pathMat = new THREE.MeshLambertMaterial({
+      color: 0x5c3d1e, // dark brown
+      transparent: true,
+      opacity: 0.4,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const pathMesh = new THREE.InstancedMesh(pathGeom, pathMat, pathTiles.length);
+    pathMesh.receiveShadow = false;
+
+    pathTiles.forEach(({ tile, count }, i) => {
+      const surfH = TILE_HEIGHT[tile.type] ?? 0.14;
+      const baseH = surfH + tile.elevation * 0.08;
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2,
+        baseH + 0.05,
+        tile.z * TILE_SIZE + TILE_SIZE / 2,
+      );
+      dummy.rotation.set(-Math.PI / 2, 0, 0);
+      dummy.scale.setScalar(1);
+      dummy.updateMatrix();
+      pathMesh.setMatrixAt(i, dummy.matrix);
+      // Slightly vary opacity per count
+      const c = new THREE.Color(0x5c3d1e);
+      pathMesh.setColorAt(i, c);
+    });
+
+    pathMesh.instanceMatrix.needsUpdate = true;
+    if (pathMesh.instanceColor) pathMesh.instanceColor.needsUpdate = true;
+    this.scene.add(pathMesh);
+    this._tradePathMeshes.push(pathMesh);
+  }
+
   /** Returns the approximate top-surface Y for a given tile type */
   static surfaceY(type) {
     return TILE_HEIGHT[type] ?? 0.14;

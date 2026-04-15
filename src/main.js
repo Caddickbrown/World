@@ -1386,6 +1386,14 @@ async function init() {
     wr.setWeather(weather.meta);
     terrainRenderer.updateAnimals(delta > 0 ? delta : 0);
     terrainRenderer.updateVegetation(world);
+    // CAD-177: Update trade path overlays and decay old traffic (throttled to once per game-second)
+    if (!terrainRenderer._tradePathTimer) terrainRenderer._tradePathTimer = 0;
+    terrainRenderer._tradePathTimer += delta;
+    if (terrainRenderer._tradePathTimer >= 2) {
+      terrainRenderer._tradePathTimer = 0;
+      world.decayTradeTraffic(time.day);
+      terrainRenderer.updateTradePaths();
+    }
     ar.update();
     buildingRenderer.checkAgents(agents);
     horseRenderer?.update();
