@@ -1872,6 +1872,60 @@ export class TerrainRenderer {
     this._tradePathMeshes.push(pathMesh);
   }
 
+  /**
+   * CAD-175: Render temple structures for settlements with hasTemple=true.
+   * Each temple is a circle of tall thin stone columns (CylinderGeometry).
+   * Called from main.js when settlement state changes.
+   */
+  updateTemples(settlements) {
+    // Remove old temple meshes
+    if (this._templeMeshes) {
+      for (const m of this._templeMeshes) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+      }
+    }
+    this._templeMeshes = [];
+
+    const templeSettlements = settlements.filter(s => s.hasTemple);
+    if (templeSettlements.length === 0) return;
+
+    // One instanced mesh for all temple columns
+    const totalColumns = templeSettlements.length * 6; // 6 columns per temple
+    const colGeom = new THREE.CylinderGeometry(0.1, 0.15, 1.2, 6);
+    const colMat  = new THREE.MeshLambertMaterial({ color: 0x8a8a7a });
+    const colMesh = new THREE.InstancedMesh(colGeom, colMat, totalColumns);
+    colMesh.castShadow = true;
+    colMesh.receiveShadow = true;
+
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+
+    for (const s of templeSettlements) {
+      const tx = (s.templeX ?? s.x) * TILE_SIZE + TILE_SIZE / 2;
+      const tz = (s.templeZ ?? s.z) * TILE_SIZE + TILE_SIZE / 2;
+      const tile = this.world.getTile(s.templeX ?? s.x, s.templeZ ?? s.z);
+      const baseY = tile ? (TILE_HEIGHT[tile.type] ?? 0.14) + (tile.elevation ?? 0) * 0.08 : 0.14;
+
+      // 6 columns in a circle of radius 0.7
+      for (let c = 0; c < 6; c++) {
+        const angle = (c / 6) * Math.PI * 2;
+        const cx = tx + Math.cos(angle) * 0.7;
+        const cz = tz + Math.sin(angle) * 0.7;
+        dummy.position.set(cx, baseY + 0.6, cz);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        colMesh.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+
+    colMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(colMesh);
+    this._templeMeshes.push(colMesh);
+  }
+
   /** Returns the approximate top-surface Y for a given tile type */
   static surfaceY(type) {
     return TILE_HEIGHT[type] ?? 0.14;

@@ -21,6 +21,8 @@ export const AgentState = {
   PERFORMING:  'performing',
   // CAD-178: Trader agents travel between settlements
   TRADING:     'trading',
+  // CAD-175: Ritual gathering at temple
+  RITUAL:      'ritual',
 };
 
 export class Agent {
@@ -122,6 +124,11 @@ export class Agent {
 
     // CAD-184: Role assigned at age 10 based on personality + available concepts
     this.role = null;
+
+    // CAD-175: Ritual state
+    this._ritualTimer = 0;        // countdown for ritual gathering session
+    this._ritualCooldown = 30 + Math.random() * 60; // time before next ritual urge
+    this.ritualMoraleBoost = 0;   // remaining boost duration (game-sec)
 
     // CAD-178: Trader journey state
     this.traderState = null;    // null | 'outbound' | 'returning'
@@ -322,7 +329,9 @@ export class Agent {
     this.needs.hunger = Math.max(0, this.needs.hunger - HUNGER_DRAIN * delta);
     const isSleeping = this.state === AgentState.SLEEPING;
     if (!isSleeping) {
-      this.needs.energy = Math.max(0, this.needs.energy - ENERGY_DRAIN * delta * envMult);
+      // CAD-175: Ritual morale boost reduces energy consumption by 5% for 24 hours post-ritual
+      const ritualMult = this.ritualMoraleBoost > 0 ? 0.95 : 1.0;
+      this.needs.energy = Math.max(0, this.needs.energy - ENERGY_DRAIN * delta * envMult * ritualMult);
     }
     if (this.discoveryFlash > 0) this.discoveryFlash -= delta;
     if (this._fireCooldown > 0) this._fireCooldown -= delta;
@@ -433,6 +442,23 @@ export class Agent {
       return;
     }
 
+    // ── CAD-175: Ritual morale boost tick ─────────────────────────────
+    if (this.ritualMoraleBoost > 0) this.ritualMoraleBoost -= delta;
+
+    // ── CAD-175: Ritual gathering ──────────────────────────────────────
+    if (this.state === AgentState.RITUAL) {
+      this._ritualTimer -= delta;
+      if (this._ritualTimer <= 0) {
+        // Ritual complete — grant morale boost (reduce energy drain 5% for 24 game-hours)
+        this.ritualMoraleBoost = 86.4; // ~24 in-game hours (scaled)
+        this.state = AgentState.WANDERING;
+        this._ritualCooldown = 60 + Math.random() * 120;
+        this._pickWanderTarget(world, allAgents);
+      }
+      this._trySocialise(delta, allAgents, conceptGraph);
+      return;
+    }
+
     // ── Periodic needs re-evaluation (even mid-wander) ────────────────
     this._needsCheckTimer -= delta;
     if (this._needsCheckTimer <= 0) {
@@ -446,6 +472,8 @@ export class Agent {
     if (this.task === 'trader' && this.traderState === null && this._traderCooldown > 0) {
       this._traderCooldown -= delta;
     }
+    // CAD-175: Tick ritual cooldown
+    if (this._ritualCooldown > 0) this._ritualCooldown -= delta;
 
     // ── Move toward target ────────────────────────────────────────────
     const dx = this.targetX - this.x;
@@ -568,6 +596,20 @@ export class Agent {
     const gatherThreshold = taskDef?.gatherThreshold ?? 0.25;
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
     const envMult = this._lastWeatherMult ?? 1.0;
+
+    // CAD-175: Ritual gathering — agents with animism or ritual concept periodically gather
+    if (this._ritualCooldown > 0) this._ritualCooldown -= 0; // ticked below in movement block
+    if ((this.knowledge.has('animism') || this.knowledge.has('ritual')) && this._ritualCooldown <= 0) {
+      const settlement = world._settlementSystem?.getSettlementFor(this);
+      if (settlement) {
+        // Head to settlement centre for ritual
+        this.state = AgentState.RITUAL;
+        this.targetX = settlement.x + 0.5;
+        this.targetZ = settlement.z + 0.5;
+        this._ritualTimer = 8 + Math.random() * 6;
+        return;
+      }
+    }
 
     // CAD-178: Traders with trade concept attempt inter-settlement journeys
     if (this.task === 'trader' && this.knowledge.has('trade') && this.traderState === null) {

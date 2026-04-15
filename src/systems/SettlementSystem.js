@@ -89,6 +89,26 @@ export class SettlementSystem {
   }
 
   /**
+   * CAD-175: Check if any settlement should build a temple.
+   * When 3+ members have animism or ritual concept and no temple exists yet, mark it.
+   * @param {object[]} agents
+   */
+  checkTempleConstruction(agents) {
+    for (const s of this.settlements) {
+      if (s.hasTemple) continue;
+      const members = agents.filter(a => s.memberIds.includes(a.id) && a.health > 0);
+      const ritualCount = members.filter(a =>
+        a.knowledge.has('animism') || a.knowledge.has('ritual')
+      ).length;
+      if (ritualCount >= 3) {
+        s.hasTemple = true;
+        s.templeX = s.x;
+        s.templeZ = s.z;
+      }
+    }
+  }
+
+  /**
    * CAD-178: Passively grow settlement resources over time based on member count.
    * CAD-180: Tick cultural drift for isolated settlements.
    * @param {number} delta

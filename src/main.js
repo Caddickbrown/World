@@ -1318,6 +1318,20 @@ async function init() {
         world._contactEvents = [];
       }
 
+      // ── CAD-175: Temple construction check (throttled) ─────────────────────
+      if (!world._templeCheckTimer) world._templeCheckTimer = 0;
+      world._templeCheckTimer += delta;
+      if (world._templeCheckTimer >= 5) {
+        world._templeCheckTimer = 0;
+        const prevTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
+        settlementSystem.checkTempleConstruction(agents);
+        const newTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
+        if (newTempleCount > prevTempleCount) {
+          terrainRenderer.updateTemples(settlementSystem.settlements);
+          historyLog.add('milestone', 'A temple was raised at a settlement', time.day);
+        }
+      }
+
       // ── CAD-176: Settlement war checks (throttled — once per 5 game-seconds) ──
       if (!world._warCheckTimer) world._warCheckTimer = 0;
       world._warCheckTimer += delta;
