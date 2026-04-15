@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { TileType, TILE_SIZE } from '../simulation/World.js';
 
+// ── Chunk-based rendering ─────────────────────────────────────────────────────
+// 16×16 tiles per chunk. Only chunks near the camera are built and rendered.
+export const CHUNK_SIZE = 16;
+
 // Visual height of each tile type (the box's Y scale)
 const TILE_HEIGHT = {
   [TileType.DEEP_WATER]: 0.02,
@@ -35,14 +39,140 @@ const TILE_COLOR_HSL = {
 
 const GAP = 0.0; // gap between tiles
 
+// ── TerrainChunk ─────────────────────────────────────────────────────────────
+// Manages the base tile meshes for a CHUNK_SIZE×CHUNK_SIZE region of the world.
+class TerrainChunk {
+  constructor(cx, cy) {
+    this.cx = cx;
+    this.cy = cy; // chunk grid coords
+    this.group = new THREE.Group();
+    this.dirty = true;
+    this.built = false;
+  }
+
+  /**
+   * Build (or rebuild) the base tile geometry for this chunk.
+   * @param {object} world  - World instance
+   * @param {Function} rngFn - deterministic per-tile rng from TerrainRenderer
+   */
+  build(world, rngFn) {
+    // Clear existing meshes
+    while (this.group.children.length) {
+      const child = this.group.children[0];
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) child.material.forEach(m => m.dispose());
+        else child.material.dispose();
+      }
+      this.group.remove(child);
+    }
+
+    // Tile range for this chunk
+    const x0 = this.cx * CHUNK_SIZE;
+    const z0 = this.cy * CHUNK_SIZE;
+    const x1 = Math.min(x0 + CHUNK_SIZE, world.width);
+    const z1 = Math.min(z0 + CHUNK_SIZE, world.height);
+
+    // Group tiles by type for instanced rendering
+    const buckets = {};
+    for (const type of Object.keys(TILE_HEIGHT)) buckets[type] = [];
+
+    for (let z = z0; z < z1; z++) {
+      for (let x = x0; x < x1; x++) {
+        const tile = world.tiles[z][x];
+        if (buckets[tile.type]) buckets[tile.type].push(tile);
+      }
+    }
+
+    const dummy = new THREE.Object3D();
+    const color  = new THREE.Color();
+
+    for (const [type, tiles] of Object.entries(buckets)) {
+      if (tiles.length === 0) continue;
+
+      const baseH = TILE_HEIGHT[type];
+      if (baseH === undefined) continue;
+      const hsl = TILE_COLOR_HSL[type];
+      if (!hsl) continue;
+      const [h, s, l] = hsl;
+      const isMountain = type === TileType.MOUNTAIN;
+
+      const geom = isMountain
+        ? new THREE.ConeGeometry(0.92, 1.5, 8)
+        : new THREE.BoxGeometry(TILE_SIZE - GAP, 1, TILE_SIZE - GAP);
+      const mat  = new THREE.MeshLambertMaterial();
+      const mesh = new THREE.InstancedMesh(geom, mat, tiles.length);
+      mesh.receiveShadow = true;
+
+      tiles.forEach((tile, i) => {
+        const hVariation = baseH + tile.elevation * 0.08;
+        const lVariation = l + (Math.sin(tile.x * 3.1 + tile.z * 2.7) * 0.5 + 0.5) * 6 - 3;
+
+        if (isMountain) {
+          const widthVar = 0.85 + rngFn(tile.x, tile.z, 14) * 0.25;
+          const tiltX    = (rngFn(tile.x, tile.z, 15) - 0.5) * 0.12;
+          const tiltZ    = (rngFn(tile.x, tile.z, 16) - 0.5) * 0.12;
+          dummy.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2 + (rngFn(tile.x, tile.z, 17) - 0.5) * 0.15,
+            hVariation / 2,
+            tile.z * TILE_SIZE + TILE_SIZE / 2 + (rngFn(tile.x, tile.z, 18) - 0.5) * 0.15,
+          );
+          dummy.scale.set(widthVar, hVariation / 1.5, widthVar);
+          dummy.rotation.set(tiltX, rngFn(tile.x, tile.z, 19) * 0.08, tiltZ);
+          dummy.updateMatrix();
+        } else {
+          dummy.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2,
+            hVariation / 2,
+            tile.z * TILE_SIZE + TILE_SIZE / 2,
+          );
+          dummy.scale.set(1, hVariation, 1);
+          dummy.updateMatrix();
+        }
+        mesh.setMatrixAt(i, dummy.matrix);
+
+        color.setHSL(h / 360, s / 100, Math.max(0.05, Math.min(0.95, lVariation / 100)));
+        mesh.setColorAt(i, color);
+      });
+
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      this.group.add(mesh);
+    }
+
+    this.dirty = false;
+    this.built = true;
+  }
+
+  dispose() {
+    this.group.traverse(obj => {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+        else obj.material.dispose();
+      }
+    });
+  }
+}
+
+// ── TerrainRenderer ──────────────────────────────────────────────────────────
+
 export class TerrainRenderer {
   constructor(scene, world) {
     this.scene = scene;
     this.world = world;
-    this._meshes = []; // tracked for dispose()
+    this._meshes = []; // tracked for dispose() — global (vegetation, animals, etc.)
     this._animatedAnimals = []; // { mesh, instances: [{baseX,baseY,baseZ,scale,rotY,seed}], config }
     this._animTime = 0;
-    this._build();
+
+    // Chunk management
+    this._chunks       = new Map(); // key: "cx,cy" → TerrainChunk
+    this._visibleChunks = new Set();
+    this._chunkCountX  = Math.ceil(world.width  / CHUNK_SIZE);
+    this._chunkCountY  = Math.ceil(world.height / CHUNK_SIZE);
+
+    // Build global features (vegetation, animals, rivers, etc.) once
+    this._buildGlobalFeatures();
   }
 
   /**
@@ -55,17 +185,99 @@ export class TerrainRenderer {
 
   /** Remove all terrain meshes and free GPU memory */
   dispose() {
+    // Dispose chunk groups
+    for (const [, chunk] of this._chunks) {
+      chunk.dispose();
+      this.scene.remove(chunk.group);
+    }
+    this._chunks.clear();
+    this._visibleChunks.clear();
+
+    // Dispose global feature meshes (vegetation, animals, rivers, etc.)
     for (const mesh of this._meshes) {
       this.scene.remove(mesh);
-      mesh.geometry.dispose();
-      mesh.material.dispose();
+      if (mesh.geometry) mesh.geometry.dispose();
+      if (mesh.material) {
+        if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
+        else mesh.material.dispose();
+      }
     }
     this._meshes = [];
     this._animatedAnimals = [];
   }
 
-  _build() {
-    // Group tiles by type for instanced rendering
+  // ── Chunk visibility management ────────────────────────────────────────────
+
+  /**
+   * Call this with the camera each frame (or when camera moves significantly).
+   * Builds new chunks that come into range, unloads chunks that go out of range.
+   */
+  updateVisibility(camera) {
+    const camTileX  = Math.floor(camera.position.x / TILE_SIZE);
+    const camTileZ  = Math.floor(camera.position.z / TILE_SIZE);
+    const camChunkX = Math.floor(camTileX / CHUNK_SIZE);
+    const camChunkZ = Math.floor(camTileZ / CHUNK_SIZE);
+
+    const RENDER_RADIUS = 4; // chunks in each direction (~64 tiles)
+    const newVisible = new Set();
+
+    for (let dx = -RENDER_RADIUS; dx <= RENDER_RADIUS; dx++) {
+      for (let dz = -RENDER_RADIUS; dz <= RENDER_RADIUS; dz++) {
+        const cx = camChunkX + dx;
+        const cz = camChunkZ + dz;
+        if (cx < 0 || cz < 0 || cx >= this._chunkCountX || cz >= this._chunkCountY) continue;
+        const key = `${cx},${cz}`;
+        newVisible.add(key);
+
+        if (!this._chunks.has(key)) {
+          const chunk = new TerrainChunk(cx, cz);
+          this._chunks.set(key, chunk);
+          this.scene.add(chunk.group);
+        }
+
+        const chunk = this._chunks.get(key);
+        if (chunk.dirty || !chunk.built) {
+          chunk.build(this.world, this._rng.bind(this));
+        }
+      }
+    }
+
+    // Unload chunks that went out of range (with hysteresis buffer)
+    const UNLOAD_RADIUS = RENDER_RADIUS + 2;
+    for (const [key, chunk] of this._chunks) {
+      const [cx, cz] = key.split(',').map(Number);
+      if (Math.abs(cx - camChunkX) > UNLOAD_RADIUS || Math.abs(cz - camChunkZ) > UNLOAD_RADIUS) {
+        chunk.dispose();
+        this.scene.remove(chunk.group);
+        this._chunks.delete(key);
+      }
+    }
+
+    this._visibleChunks = newVisible;
+  }
+
+  /**
+   * Mark the chunk containing tile (x, z) as dirty so it rebuilds next frame.
+   */
+  markTileDirty(x, z) {
+    const cx = Math.floor(x / CHUNK_SIZE);
+    const cz = Math.floor(z / CHUNK_SIZE);
+    const chunk = this._chunks.get(`${cx},${cz}`);
+    if (chunk) chunk.dirty = true;
+  }
+
+  /**
+   * Called on initial load — build all chunks visible from the starting camera position.
+   */
+  buildInitial(camera) {
+    this.updateVisibility(camera);
+  }
+
+  // ── Global features (vegetation, animals, rivers, etc.) ───────────────────
+
+  _buildGlobalFeatures() {
+    // Build tile-type buckets for vegetation/animals/detail features.
+    // Base tile geometry is now handled per-chunk by TerrainChunk.build().
     const buckets = {
       [TileType.DEEP_WATER]: [],
       [TileType.WATER]:    [],
@@ -86,62 +298,6 @@ export class TerrainRenderer {
         const tile = this.world.tiles[z][x];
         if (buckets[tile.type]) buckets[tile.type].push(tile);
       }
-    }
-
-    for (const [type, tiles] of Object.entries(buckets)) {
-      if (tiles.length === 0) continue;
-
-      const baseH = TILE_HEIGHT[type];
-      const [h, s, l] = TILE_COLOR_HSL[type];
-      const isMountain = type === TileType.MOUNTAIN;
-
-      // Mountains use tapered cones for a peak shape; other tiles use boxes
-      const geom = isMountain
-        ? new THREE.ConeGeometry(0.92, 1.5, 8)
-        : new THREE.BoxGeometry(TILE_SIZE - GAP, 1, TILE_SIZE - GAP);
-      const mat  = new THREE.MeshLambertMaterial();
-      const mesh = new THREE.InstancedMesh(geom, mat, tiles.length);
-      mesh.receiveShadow = true;
-
-      const dummy = new THREE.Object3D();
-      const color = new THREE.Color();
-
-      tiles.forEach((tile, i) => {
-        const hVariation = baseH + tile.elevation * 0.08;
-        const lVariation = l + (Math.sin(tile.x * 3.1 + tile.z * 2.7) * 0.5 + 0.5) * 6 - 3;
-
-        if (isMountain) {
-          // Cone: base at y=0, tip at y=height; geom is centered, so position at half-height
-          const widthVar = 0.85 + this._rng(tile.x, tile.z, 14) * 0.25;
-          const tiltX = (this._rng(tile.x, tile.z, 15) - 0.5) * 0.12;
-          const tiltZ = (this._rng(tile.x, tile.z, 16) - 0.5) * 0.12;
-          dummy.position.set(
-            tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 17) - 0.5) * 0.15,
-            hVariation / 2,
-            tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 18) - 0.5) * 0.15,
-          );
-          dummy.scale.set(widthVar, hVariation / 1.5, widthVar);
-          dummy.rotation.set(tiltX, this._rng(tile.x, tile.z, 19) * 0.08, tiltZ);
-          dummy.updateMatrix();
-        } else {
-          dummy.position.set(
-            tile.x * TILE_SIZE + TILE_SIZE / 2,
-            hVariation / 2,
-            tile.z * TILE_SIZE + TILE_SIZE / 2,
-          );
-          dummy.scale.set(1, hVariation, 1);
-          dummy.updateMatrix();
-        }
-        mesh.setMatrixAt(i, dummy.matrix);
-
-        color.setHSL(h / 360, s / 100, Math.max(0.05, Math.min(0.95, lVariation / 100)));
-        mesh.setColorAt(i, color);
-      });
-
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      this.scene.add(mesh);
-      this._meshes.push(mesh);
     }
 
     this._buildVegetation(buckets);

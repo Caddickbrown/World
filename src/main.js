@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+// Simulation imports kept for type hints and proxy-agent construction only.
+// The authoritative simulation now runs in SimulationWorker.js.
 import { World, TILE_SIZE, WORLD_WIDTH, WORLD_HEIGHT, TileType } from './simulation/World.js';
 import { Agent }             from './simulation/Agent.js';
 import { ConceptGraph }      from './simulation/ConceptGraph.js';
@@ -37,6 +39,19 @@ import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
 import { RainbowRenderer }    from './renderer/RainbowRenderer.js';
 import { FishShoal, initFishShoals } from './simulation/FishShoal.js';
 import { PopulationManager } from './simulation/PopulationManager.js';
+
+// ── Web Worker: authoritative simulation runs off-main-thread ──────────────
+const simWorker = new Worker(
+  new URL('./workers/SimulationWorker.js', import.meta.url),
+  { type: 'module' }
+);
+
+// Pending inputs to flush to the worker each tick
+let pendingInputs = [];
+// Latest worker state snapshot (written by onmessage, read by renderer each frame)
+let latestWorkerState = null;
+// Whether the worker has finished its INIT
+let workerReady = false;
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -118,11 +133,24 @@ async function init() {
   world.naturalFires = new Map();
   let lightningCooldown = 0;
   conceptGraph = new ConceptGraph(conceptsData);
-  const agents = world.getSpawnPoints(AGENT_COUNT).map(p => new Agent(p.x, p.z));
-  agents.forEach(a => ConflictSystem.assignFaction(a));
+  // Proxy agents array — populated from worker STATE messages, not local construction.
+  const agents = [];
+
+  // ── Send INIT to simulation worker ────────────────────────────────────
+  {
+    const itemsArr = [...itemDefs.values()];
+    simWorker.postMessage({
+      type: 'INIT',
+      seed: world.seed,
+      agentCount: AGENT_COUNT,
+      conceptsData,
+      itemsData: itemsArr,
+    });
+  }
 
   const wr = new WorldRenderer(canvas);
   terrainRenderer = new TerrainRenderer(wr.scene, world);
+  terrainRenderer.buildInitial(wr.camera);
   ar = new AgentRenderer(wr.scene, agents, world);
   buildingRenderer = new BuildingRenderer(wr.scene, world);
   horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
@@ -290,6 +318,7 @@ async function init() {
     agents.forEach(a => ConflictSystem.assignFaction(a));
 
     terrainRenderer = new TerrainRenderer(wr.scene, world);
+    terrainRenderer.buildInitial(wr.camera);
     ar = new AgentRenderer(wr.scene, agents, world);
     buildingRenderer = new BuildingRenderer(wr.scene, world);
     horses.length = 0;
@@ -386,6 +415,7 @@ async function init() {
         agents.forEach(a => ConflictSystem.assignFaction(a));
 
         terrainRenderer = new TerrainRenderer(wr.scene, world);
+        terrainRenderer.buildInitial(wr.camera);
         ar = new AgentRenderer(wr.scene, agents, world);
         buildingRenderer = new BuildingRenderer(wr.scene, world);
         horses.length = 0;
@@ -487,6 +517,7 @@ async function init() {
         }
 
         terrainRenderer = new TerrainRenderer(wr.scene, world);
+        terrainRenderer.buildInitial(wr.camera);
         ar = new AgentRenderer(wr.scene, agents, world);
         buildingRenderer = new BuildingRenderer(wr.scene, world);
         horses.length = 0;
@@ -1090,6 +1121,20 @@ async function init() {
     el.addEventListener('animationend', () => el.remove());
   }
 
+  // ── Chunk visibility (CAD-218) ────────────────────────────────────────
+  let _lastCamChunkX = -999;
+  let _lastCamChunkZ = -999;
+
+  function checkChunkVisibility() {
+    const cx = Math.floor(wr.camera.position.x / (TILE_SIZE * 16));
+    const cz = Math.floor(wr.camera.position.z / (TILE_SIZE * 16));
+    if (cx !== _lastCamChunkX || cz !== _lastCamChunkZ) {
+      terrainRenderer.updateVisibility(wr.camera);
+      _lastCamChunkX = cx;
+      _lastCamChunkZ = cz;
+    }
+  }
+
   // ── Game loop ──────────────────────────────────────────────────────────
   let lastTimestamp = null;
 
@@ -1499,6 +1544,7 @@ async function init() {
     rainbowRenderer?.update(realDelta);                    // CAD-121 (always real time)
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
+    checkChunkVisibility(); // CAD-218: load/unload terrain chunks based on camera position
     wr.render();
     updateHUD();
     updateOverlays();
@@ -1774,6 +1820,171 @@ async function init() {
     if (heatmapOverlayVisible) drawHeatmapOverlay();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
   }
+
+  // ── Worker message handler ─────────────────────────────────────────────
+  simWorker.onmessage = (e) => {
+    const msg = e.data;
+
+    if (msg.type === 'INIT_COMPLETE') {
+      if (msg.fullTiles && msg.fullTiles.length > 0) {
+        let i = 0;
+        for (let z = 0; z < world.height; z++) {
+          for (let x = 0; x < world.width; x++) {
+            const wt = msg.fullTiles[i++];
+            if (wt && world.tiles[z] && world.tiles[z][x]) {
+              Object.assign(world.tiles[z][x], wt);
+            }
+          }
+        }
+        terrainRenderer.buildInitial(wr.camera);
+      }
+
+      if (msg.agentState) {
+        agents.length = 0;
+        for (const ws of msg.agentState) {
+          const a = new Agent(ws.x, ws.z);
+          a.id = ws.id;
+          a.name = ws.name;
+          a.health = ws.health;
+          a.age = ws.age;
+          a.state = ws.state;
+          a.needs = { energy: ws.energy, hunger: ws.hunger };
+          a.role = ws.role;
+          a.task = ws.task;
+          a.isDead = ws.isDead;
+          a.facingX = ws.facingX;
+          a.facingZ = ws.facingZ;
+          a.discoveryFlash = ws.discoveryFlash;
+          a.lifeStage = ws.lifeStage;
+          a.faction = ws.faction;
+          a.knowledge = new Set(ws.knowledge ?? []);
+          agents.push(a);
+        }
+        ar.dispose();
+        ar = new AgentRenderer(wr.scene, agents, world);
+      }
+
+      if (msg.worldStats && time && msg.worldStats.gameTime != null) {
+        time.gameTime = msg.worldStats.gameTime;
+      }
+
+      workerReady = true;
+      if (seedEl) seedEl.textContent = 'Seed: ' + (msg.seed ?? world.seed);
+    }
+
+    else if (msg.type === 'STATE') {
+      latestWorkerState = msg;
+
+      if (msg.tileChanges?.length) {
+        for (const { x, z, type } of msg.tileChanges) {
+          const tile = world.getTile(x, z);
+          if (tile) tile.type = type;
+        }
+      }
+
+      if (msg.naturalFires) {
+        world.naturalFires.clear();
+        for (const { key, endTime } of msg.naturalFires) {
+          world.naturalFires.set(key, { endTime });
+        }
+      }
+
+      if (msg.worldStats && time && msg.worldStats.gameTime != null) {
+        time.gameTime = msg.worldStats.gameTime;
+      }
+      if (msg.worldStats && weather && msg.worldStats.weather) {
+        weather.current = msg.worldStats.weather;
+      }
+
+      if (msg.agents && ar) {
+        for (const ws of msg.agents) {
+          if (!agents.find(a => a.id === ws.id)) {
+            const child = new Agent(ws.x, ws.z);
+            child.id = ws.id;
+            child.name = ws.name;
+            child.health = ws.health;
+            child.age = ws.age;
+            child.state = ws.state;
+            child.needs = { energy: ws.energy, hunger: ws.hunger };
+            child.role = ws.role;
+            child.task = ws.task;
+            child.isDead = ws.isDead;
+            child.facingX = ws.facingX;
+            child.facingZ = ws.facingZ;
+            child.discoveryFlash = ws.discoveryFlash;
+            child.lifeStage = ws.lifeStage;
+            child.faction = ws.faction;
+            child.knowledge = new Set(ws.knowledge ?? []);
+            agents.push(child);
+            ar.addAgent(child);
+          }
+        }
+        ar.updateFromWorkerState(msg.agents);
+      }
+
+      if (msg.events?.length) {
+        for (const evt of msg.events) {
+          switch (evt.type) {
+            case 'weather':
+              showNotification(evt.message, 'env');
+              audio.playEvent('weather_change');
+              break;
+            case 'lightning':
+              if (wr) {
+                wr.addFireLight(evt.x, evt.z);
+                wr.addFlash(evt.x * TILE_SIZE + TILE_SIZE / 2, evt.z * TILE_SIZE + TILE_SIZE / 2, 0xffcc44);
+              }
+              showNotification(evt.message, 'env');
+              audio.playEvent('fire');
+              break;
+            case 'fire_end':
+              if (wr) wr.removeFireLight(evt.x, evt.z);
+              break;
+            case 'campfire':
+              if (wr) wr.addFireLight(evt.x, evt.z);
+              showNotification(evt.message, 'env');
+              break;
+            case 'discovery': {
+              showNotification(evt.message, 'social');
+              historyLog.add('discovery', evt.message, time.day);
+              const agent = agents.find(a => a.id === evt.agentId);
+              if (agent && wr) {
+                wr.addFlash(agent.x * 2, agent.z * 2, 0xffd700);
+                showSpeechBubble(agent, evt.conceptName ?? evt.message);
+                showDiscoveryRing(agent);
+              }
+              audio.playEvent('discovery');
+              break;
+            }
+            case 'task_assigned':
+              showNotification(evt.message, 'social');
+              break;
+            case 'birth':
+              birthGameTimes.push(time.gameTime);
+              showNotification(evt.message, 'social');
+              historyLog.add('birth', evt.message, time.day);
+              audio.playEvent('birth');
+              break;
+            case 'disaster':
+              showNotification(evt.message, 'env');
+              break;
+            case 'achievement':
+              showNotification(evt.message, 'social');
+              historyLog.add('discovery', evt.message, time.day);
+              break;
+          }
+        }
+      }
+    }
+
+    else if (msg.type === 'ERROR') {
+      showError('Worker error: ' + msg.message);
+    }
+  };
+
+  simWorker.onerror = (err) => {
+    showError('SimulationWorker crashed: ' + (err?.message ?? String(err)));
+  };
 
   requestAnimationFrame(frame);
   } catch (e) {
