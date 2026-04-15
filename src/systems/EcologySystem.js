@@ -252,53 +252,6 @@ export class EcologySystem {
       delete tile.herbs;
       delete tile.mushrooms;
     }
-
-    // ── CAD-193: Overgrazing — degrade GRASS to DIRT ──────────────────────
-    // Count animals per tile using Math.floor of their tile-space positions.
-    const animalCount = new Map(); // "x,z" → count
-    const countAt = (ax, az) => {
-      const key = `${Math.floor(ax)},${Math.floor(az)}`;
-      animalCount.set(key, (animalCount.get(key) ?? 0) + 1);
-    };
-    for (const s of sheep)  { if (!s.isDead) countAt(s.x, s.z); }
-    for (const h of horses) { if (h.horseSim) countAt(h.horseSim.x, h.horseSim.z); }
-
-    for (let z = 0; z < H; z++) {
-      for (let x = 0; x < W; x++) {
-        const tile = world.tiles[z][x];
-        const key  = `${x},${z}`;
-        const cnt  = animalCount.get(key) ?? 0;
-
-        if (tile.type === TileType.GRASS) {
-          if (cnt > OVERGRAZING_THRESHOLD) {
-            tile._overgrazeDays = (tile._overgrazeDays ?? 0) + 1;
-            if (tile._overgrazeDays >= OVERGRAZING_DAYS_TRIGGER) {
-              // Degrade to DIRT
-              tile.type = TileType.DIRT;
-              tile.resource = 0;
-              tile._overgrazeDays = 0;
-              tile._dirtDays = 0;
-            }
-          } else {
-            tile._overgrazeDays = Math.max(0, (tile._overgrazeDays ?? 0) - 1);
-          }
-        } else if (tile.type === TileType.DIRT) {
-          const noAnimals = cnt === 0;
-          if (noAnimals) {
-            tile._dirtDays = (tile._dirtDays ?? 0) + 1;
-            if (tile._dirtDays >= DIRT_RECOVERY_DAYS) {
-              // Recover to GRASS
-              tile.type = TileType.GRASS;
-              tile.resource = 0.5;
-              tile.depletionLevel = 0;
-              tile._dirtDays = 0;
-            }
-          } else {
-            tile._dirtDays = Math.max(0, (tile._dirtDays ?? 0) - 1);
-          }
-        }
-      }
-    }
   }
 
   /**
