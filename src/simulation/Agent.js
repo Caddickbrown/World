@@ -111,6 +111,15 @@ export class Agent {
     // CAD-185: Bonded pairs — partner agent ID and interaction history
     this.bondedPartnerId = null;
     this.socialHistory = {}; // map of agentId -> interaction count
+
+    // CAD-187: Agent memory — food sources, dangers, relationships
+    this.memory = {
+      foodSources: [],  // [{x, y, type, lastVisited}]  (y = game-day)
+      dangers: [],      // [{x, z, type, time}]
+    };
+
+    // CAD-184: Role assigned at age 10 based on personality + available concepts
+    this.role = null;
   }
 
   static get TASKS() {
@@ -249,6 +258,18 @@ export class Agent {
     }
 
     if (this.knowledge.has('organisation') && !this.task) this._adoptTask(allAgents);
+
+    // CAD-187: Memory decay — remove food sources older than 30 game days
+    if (world.day !== undefined && this.memory.foodSources.length > 0) {
+      this.memory.foodSources = this.memory.foodSources.filter(
+        fs => (world.day - fs.lastVisited) < 30,
+      );
+    }
+
+    // CAD-184: Role assignment at age 10 (adult life stage just reached)
+    if (!this.role && this.isAdult && this.age >= 10) {
+      this._assignRole(allAgents, world);
+    }
 
     // Knowledge bonuses
     const hasFire    = this.knowledge.has('fire');
@@ -419,6 +440,14 @@ export class Agent {
       this.x = this.targetX;
       this.z = this.targetZ;
       this._onArrival(world, allAgents, conceptGraph);
+    }
+
+    // ── Lava damage: agents on a LAVA tile take continuous damage ─────
+    // LAVA is impassable so this guards edge cases (world edits, respawn overlap).
+    const currentTile = world.getTile(Math.floor(this.x), Math.floor(this.z));
+    if (currentTile && currentTile.type === TileType.LAVA) {
+      this.health = Math.max(0, this.health - 0.05 * delta);
+      this._pickWanderTarget(world); // flee immediately
     }
 
     // ── Continuous checks ──────────────────────────────────────────────
@@ -741,6 +770,24 @@ export class Agent {
   _pickGatherTarget(world) {
     const cx = Math.floor(this.x);
     const cz = Math.floor(this.z);
+
+    // CAD-187: Prefer known food sources from memory before random search
+    if (this.memory.foodSources.length > 0) {
+      // Sort by recency and distance
+      const sorted = [...this.memory.foodSources].sort((a, b) => {
+        const da = Math.hypot(a.x - cx, (a.y || a.z || 0) - cz);
+        const db = Math.hypot(b.x - cx, (b.y || b.z || 0) - cz);
+        return da - db;
+      });
+      const best = sorted[0];
+      const memTile = world.getTile(Math.floor(best.x), Math.floor(best.z || best.y || cz));
+      if (memTile && world.canTraverse(Math.floor(best.x), Math.floor(best.z || best.y || cz), this.knowledge)) {
+        this.targetX = best.x + 0.5;
+        this.targetZ = (best.z || best.y || cz) + 0.5;
+        return;
+      }
+    }
+
     const tile = world.findNearest(cx, cz, [TileType.GRASS, TileType.FOREST, TileType.WOODLAND], 8);
     if (tile) {
       this.targetX = tile.x + 0.5;
@@ -748,6 +795,28 @@ export class Agent {
     } else {
       this._pickWanderTarget(world);
     }
+  }
+
+  /** CAD-187: Record a food source in memory after successful gathering */
+  _rememberFoodSource(tx, tz, tileType, gameDay) {
+    const existing = this.memory.foodSources.find(fs => fs.x === tx && (fs.z === tz || fs.y === tz));
+    if (existing) {
+      existing.lastVisited = gameDay;
+    } else {
+      this.memory.foodSources.push({ x: tx, z: tz, y: tz, type: tileType, lastVisited: gameDay });
+      // Cap memory at 10 locations
+      if (this.memory.foodSources.length > 10) {
+        this.memory.foodSources.sort((a, b) => a.lastVisited - b.lastVisited);
+        this.memory.foodSources.shift();
+      }
+    }
+  }
+
+  /** CAD-187: Record a danger event in memory */
+  _rememberDanger(dx, dz, type, gameDay) {
+    this.memory.dangers.push({ x: dx, z: dz, type, time: gameDay });
+    // Cap at 5 dangers
+    if (this.memory.dangers.length > 5) this.memory.dangers.shift();
   }
 
   // ── Concept discovery ─────────────────────────────────────────────────
@@ -946,6 +1015,78 @@ export class Agent {
   isDuskTime(timeSystem) {
     const h = typeof timeSystem === 'number' ? timeSystem : timeSystem.hour;
     return h >= 18 && h < 20;
+  }
+
+  // CAD-184: Role assignment based on personality + available settlement concepts
+  _assignRole(allAgents, world) {
+    // Collect concepts known by any nearby agent as a proxy for "settlement has concept"
+    const knownBySettlement = new Set(this.knowledge);
+    const nearby = this._spatialGrid
+      ? this._spatialGrid.getNearby(this.x, this.z, 10).filter(a => a !== this && a.health > 0)
+      : (allAgents || []).filter(a => a !== this && a.health > 0);
+    for (const a of nearby.slice(0, 20)) {
+      for (const k of a.knowledge) knownBySettlement.add(k);
+    }
+
+    const p = this.personality;
+    const candidates = [];
+
+    if (knownBySettlement.has('agriculture') && p.industriousness >= 0.5)
+      candidates.push({ role: 'farmer',   weight: 0.5 + p.industriousness });
+    if (knownBySettlement.has('animal_domestication') && nearby.length > 0)
+      candidates.push({ role: 'herder',   weight: 0.4 + p.caution });
+    if (knownBySettlement.has('construction'))
+      candidates.push({ role: 'builder',  weight: 0.4 + (p.industriousness + p.courage) / 2 });
+    if (knownBySettlement.has('medicine'))
+      candidates.push({ role: 'healer',   weight: 0.5 + p.caution });
+    if (knownBySettlement.has('music') && p.creativity >= 0.5)
+      candidates.push({ role: 'musician', weight: 0.4 + p.creativity });
+    if (knownBySettlement.has('trade'))
+      candidates.push({ role: 'trader',   weight: 0.4 + p.sociability });
+    if (knownBySettlement.has('governance'))
+      candidates.push({ role: 'guard',    weight: 0.4 + p.courage });
+
+    if (candidates.length === 0) return;
+
+    const totalW = candidates.reduce((s, c) => s + c.weight, 0);
+    let roll = Math.random() * totalW;
+    for (const c of candidates) {
+      roll -= c.weight;
+      if (roll <= 0) {
+        this.role = c.role;
+        this._applyRoleBonus(c.role);
+        return;
+      }
+    }
+    this.role = candidates[candidates.length - 1].role;
+    this._applyRoleBonus(this.role);
+  }
+
+  _applyRoleBonus(role) {
+    switch (role) {
+      case 'farmer':   this.personality.industriousness = Math.min(1, this.personality.industriousness + 0.05); break;
+      case 'herder':   this.personality.caution         = Math.min(1, this.personality.caution + 0.05); break;
+      case 'builder':  this.personality.courage         = Math.min(1, this.personality.courage + 0.05); break;
+      case 'healer':   this.personality.caution         = Math.min(1, this.personality.caution + 0.05); break;
+      case 'musician': this.personality.creativity      = Math.min(1, this.personality.creativity + 0.05); break;
+      case 'trader':   this.personality.sociability     = Math.min(1, this.personality.sociability + 0.05); break;
+      case 'guard':    this.personality.courage         = Math.min(1, this.personality.courage + 0.05); break;
+    }
+  }
+
+  // CAD-200: Attempt to domesticate a nearby wolf. Call once per game-day from main.js.
+  tryDomesticateWolves(wolves) {
+    if (!this.knowledge.has('animal_domestication')) return;
+    for (const wolf of wolves) {
+      if (!wolf || wolf.isDead || wolf.owner !== null) continue;
+      const d = Math.hypot(wolf.x - this.x, wolf.z - this.z);
+      if (d <= 2 && wolf.fearLevel < 0.3) {
+        // 1% chance per day
+        if (Math.random() < 0.01) {
+          wolf.owner = this;
+        }
+      }
+    }
   }
 
   /**

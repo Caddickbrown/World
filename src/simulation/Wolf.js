@@ -232,8 +232,26 @@ export class Wolf {
       this.huntTarget = null;
     }
 
+    // ── 2b. Domesticated dog — follow owner, assist with food yield ────
+    if (this.owner && !this.owner.isDead) {
+      this.isHunting = false;
+      this.isFleeing = false;
+      const od = Math.hypot(this.owner.x - this.x, this.owner.z - this.z);
+      if (od > 1.5) {
+        this.gait = 'walk';
+        this.targetX = this.owner.x + (Math.random() - 0.5);
+        this.targetZ = this.owner.z + (Math.random() - 0.5);
+        this._retargetIn = 1;
+      } else {
+        this.gait = 'idle';
+        this._idleLeft = 0.5;
+      }
+      // Reduce fear further when bonded
+      this.fearLevel = Math.max(0, this.fearLevel - delta * 0.002);
+    }
+
     // ── 3. Pack cohesion — rejoin pack centre if too far ───────────────
-    if (!this.isFleeing && !this.isHunting) {
+    if (!this.isFleeing && !this.isHunting && !this.owner) {
       const centre = this._packCentre();
       const distFromCentre = Math.hypot(centre.x - this.x, centre.z - this.z);
       if (distFromCentre > PACK_COHESION_DIST) {
