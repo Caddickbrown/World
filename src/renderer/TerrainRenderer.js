@@ -692,6 +692,104 @@ export class TerrainRenderer {
       }
     }
 
+    // ── CAD-203: Fruit trees on FOREST tiles with fruitTree flag ──────────
+    {
+      const SURF = TerrainRenderer.surfaceY(TileType.FOREST);
+      const fruitTreeTiles = (buckets[TileType.FOREST] ?? []).filter(t => t.fruitTree);
+      if (fruitTreeTiles.length > 0) {
+        const dummy2 = new THREE.Object3D();
+
+        // Trunk — shorter and wider than forest trees (rounder fruit tree shape)
+        const trunkMesh = this._makeInstanced(
+          new THREE.CylinderGeometry(0.07, 0.11, 0.38, 6),
+          new THREE.MeshLambertMaterial({ color: 0x7a4e2d }),
+          fruitTreeTiles.length,
+        );
+        fruitTreeTiles.forEach((tile, i) => {
+          const sz = 0.65 + this._rng(tile.x, tile.z, 90) * 0.45;
+          dummy2.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 91) - 0.5) * 1.2,
+            SURF + 0.19 * sz,
+            tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 92) - 0.5) * 1.2,
+          );
+          dummy2.scale.set(sz, sz, sz);
+          dummy2.rotation.set(0, this._rng(tile.x, tile.z, 93) * Math.PI * 2, 0);
+          dummy2.updateMatrix();
+          trunkMesh.setMatrixAt(i, dummy2.matrix);
+        });
+        trunkMesh.instanceMatrix.needsUpdate = true;
+
+        // Canopy — rounder, warm green sphere (larger than trunk radius)
+        const canopyMesh = this._makeInstanced(
+          new THREE.SphereGeometry(0.40, 8, 7),
+          new THREE.MeshLambertMaterial({ color: 0x5aaa30 }),
+          fruitTreeTiles.length,
+        );
+        const initCanopyC = new THREE.Color(0x5aaa30);
+        for (let i = 0; i < fruitTreeTiles.length; i++) canopyMesh.setColorAt(i, initCanopyC);
+        if (canopyMesh.instanceColor) canopyMesh.instanceColor.needsUpdate = true;
+
+        const canopyXform = (tile, resource) => {
+          const sz = 0.65 + this._rng(tile.x, tile.z, 90) * 0.45;
+          const rsc = 0.5 + resource * 0.5;
+          return {
+            pos: [
+              tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 91) - 0.5) * 1.2,
+              SURF + 0.38 * sz + 0.40 * sz * rsc * 0.5,
+              tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 92) - 0.5) * 1.2,
+            ],
+            scale: [0.90 * sz * rsc, 0.82 * sz * rsc, 0.90 * sz * rsc],
+          };
+        };
+        fruitTreeTiles.forEach((tile, i) => {
+          const { pos, scale } = canopyXform(tile, 1);
+          dummy2.position.set(...pos);
+          dummy2.scale.set(...scale);
+          dummy2.rotation.set(0, 0, 0);
+          dummy2.updateMatrix();
+          canopyMesh.setMatrixAt(i, dummy2.matrix);
+        });
+        canopyMesh.instanceMatrix.needsUpdate = true;
+
+        // Fruit spheres — small orange/red dots clustered near canopy top
+        const fruitPlacements = [];
+        for (const tile of fruitTreeTiles) {
+          const count = 3 + Math.floor(this._rng(tile.x, tile.z, 94) * 5); // 3-7 fruits
+          for (let f = 0; f < count; f++) fruitPlacements.push({ tile, f });
+        }
+        const fruitMesh = this._makeInstanced(
+          new THREE.SphereGeometry(0.06, 5, 4),
+          new THREE.MeshLambertMaterial({ color: 0xff5500 }),
+          fruitPlacements.length,
+        );
+        fruitPlacements.forEach(({ tile, f }, i) => {
+          const s = 95 + f * 7;
+          const sz = 0.65 + this._rng(tile.x, tile.z, 90) * 0.45;
+          const ox = (this._rng(tile.x, tile.z, s)     - 0.5) * 0.60;
+          const oz = (this._rng(tile.x, tile.z, s + 1) - 0.5) * 0.60;
+          const oy = this._rng(tile.x, tile.z, s + 2) * 0.28;
+          dummy2.position.set(
+            tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 91) - 0.5) * 1.2 + ox,
+            SURF + 0.38 * sz + oy,
+            tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 92) - 0.5) * 1.2 + oz,
+          );
+          dummy2.scale.setScalar(1);
+          dummy2.rotation.set(0, 0, 0);
+          dummy2.updateMatrix();
+          fruitMesh.setMatrixAt(i, dummy2.matrix);
+        });
+        fruitMesh.instanceMatrix.needsUpdate = true;
+
+        // Resource-driven canopy updater
+        this._plantUpdaters.push({ mesh: canopyMesh, placements: fruitTreeTiles.map(t => ({ tile: t, sub: 0 })), updateFn: ({ tile }, rng) => {
+          const r = tile.resource;
+          return { ...canopyXform(tile, r),
+            rot: [0, 0, 0],
+            color: [0.35 * r + 0.30 * (1 - r), 0.67 * r + 0.40 * (1 - r), 0.19 * r + 0.20 * (1 - r)] };
+        }});
+      }
+    }
+
     // ── Rocks on STONE tiles ──────────────────────────────────────────────
     const stoneTiles = buckets[TileType.STONE].filter(t => this._rng(t.x, t.z, 5) < 0.50);
     if (stoneTiles.length > 0) {

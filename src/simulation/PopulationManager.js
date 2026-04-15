@@ -41,6 +41,33 @@ export class PopulationManager {
     this.LV_GAMMA = 0.05;  // predator death rate
     this._lvTimer = 0;
     this._lvInterval = 1;  // apply LV equations once per game-day (set from main.js or here)
+
+    /** CAD-192: Set of extinct species ('sheep', 'horse') */
+    this.extinct = new Set();
+    this._horsesEverSpawned = false;
+    // Renderer refs for reintroduce()
+    this._sheepRenderer = null;
+    this._horseRenderer = null;
+  }
+
+  /**
+   * CAD-192: Reintroduce an extinct species.
+   * Adds 2 animals back. Requires agent to have 'conservation' concept (checked by caller).
+   * @param {'sheep'|'horse'} species
+   * @returns {boolean} true if reintroduction succeeded
+   */
+  reintroduce(species) {
+    if (!this.extinct.has(species)) return false;
+    const renderer = species === 'sheep' ? this._sheepRenderer : this._horseRenderer;
+    if (!renderer) return false;
+
+    const tile1 = this._randomGrassTile();
+    const tile2 = this._randomGrassTile();
+    if (tile1) renderer.addAnimal(tile1.x, tile1.z);
+    if (tile2) renderer.addAnimal(tile2.x, tile2.z);
+
+    this.extinct.delete(species);
+    return true;
   }
 
   /**
@@ -174,6 +201,10 @@ export class PopulationManager {
    * @param {object} [lvRenderers] - optional { deerRenderer, rabbitRenderer, foxRenderer, wolfRenderer }
    */
   tick(delta, sheepRenderer, horseRenderer, predators, world, lvRenderers = null) {
+    // CAD-192: store renderer refs for reintroduce()
+    this._sheepRenderer = sheepRenderer;
+    this._horseRenderer = horseRenderer;
+
     this._tickTimer += delta;
     if (this._tickTimer < this._tickInterval) return;
     this._tickTimer = 0;
@@ -198,6 +229,9 @@ export class PopulationManager {
       const liveSheep = sheep.filter(s => !s.isDead);
       const count = liveSheep.length;
 
+      // CAD-192: detect sheep extinction
+      if (count === 0 && sheep.length > 0) this.extinct.add('sheep');
+
       if (count < sheepCapacity && Math.random() < this.REPRODUCTION_CHANCE) {
         // Spawn a new sheep on a random grass tile
         const tile = this._randomGrassTile();
@@ -218,6 +252,13 @@ export class PopulationManager {
     // ── Horse population ─────────────────────────────────────────────────
     if (horseRenderer) {
       const count = horseRenderer.entries.length;
+
+      // CAD-192: detect horse extinction
+      if (count === 0) {
+        if (this._horsesEverSpawned) this.extinct.add('horse');
+      } else {
+        this._horsesEverSpawned = true;
+      }
 
       if (count < horseCapacity && Math.random() < this.REPRODUCTION_CHANCE) {
         const tile = this._randomGrassTile();

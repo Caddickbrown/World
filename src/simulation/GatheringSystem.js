@@ -63,9 +63,12 @@ export class GatheringSystem {
       // Water adjacency bonus for fishing
       const waterMult = activity.name === 'fishing' ? GatheringSystem.waterAdjacencyBonus(tile, world) : 1.0;
 
+      // CAD-203: fruit trees yield 3× food
+      const fruitTreeMult = (tile.fruitTree && activity.name === 'foraging') ? 3.0 : 1.0;
+
       // Calculate yield
       const rawYield = minYield + Math.random() * (maxYield - minYield);
-      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult * waterMult));
+      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult * waterMult * fruitTreeMult));
 
       if (finalYield > 0) {
         results.push({ itemId: itemDef.id, quantity: finalYield });

@@ -1007,7 +1007,7 @@ export class Agent {
     const cz = Math.floor(this.z);
 
     // CAD-187: Prefer known food sources from memory before random search
-    if (this.memory.foodSources.length > 0) {
+    if (this.memory && this.memory.foodSources && this.memory.foodSources.length > 0) {
       // Sort by recency and distance
       const sorted = [...this.memory.foodSources].sort((a, b) => {
         const da = Math.hypot(a.x - cx, (a.y || a.z || 0) - cz);
@@ -1023,6 +1023,15 @@ export class Agent {
       }
     }
 
+    // CAD-203: prefer nearby fruit trees when hungry (within radius 10)
+    if (this.needs.hunger < 0.5) {
+      const fruitTile = world.findNearestMatching(cx, cz, t => t.type === TileType.FOREST && t.fruitTree && t.resource > 0.1, 10);
+      if (fruitTile) {
+        this.targetX = fruitTile.x + 0.5;
+        this.targetZ = fruitTile.z + 0.5;
+        return;
+      }
+    }
     const tile = world.findNearest(cx, cz, [TileType.GRASS, TileType.FOREST, TileType.WOODLAND], 8);
     if (tile) {
       this.targetX = tile.x + 0.5;

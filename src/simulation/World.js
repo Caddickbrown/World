@@ -242,11 +242,14 @@ export class World {
         // CAD-211: Forest tiles get a tree lifecycle — initial age spread so not all trees are the same stage
         const isForest = type === TileType.FOREST;
         const initTreeAge = isForest ? Math.floor(Math.sin(x * 71.3 + z * 53.7) * 0.5 + 0.5) * 250 : undefined;
+        // CAD-203: ~5% of FOREST tiles are fruit trees (flagged, not a new TileType)
+        const isFruitTree = isForest && (Math.sin(x * 97.3 + z * 61.7) * 0.5 + 0.5) < 0.05;
         tiles[z][x] = {
           type, x, z, elevation: elev, resource: 1.0,
           depletionLevel: gatherable ? 0.0 : undefined,
           treeAge:   initTreeAge,
           treeStage: isForest ? World._treeStageFromAge(initTreeAge) : undefined,
+          fruitTree: isFruitTree || undefined,
         };
       }
     }
@@ -574,7 +577,11 @@ export class World {
         const tile = this.tiles[z][x];
         if (tile.type === TileType.GRASS)    tile.resource = Math.min(1, tile.resource + 0.0020 * delta * mult);
         if (tile.type === TileType.WOODLAND) tile.resource = Math.min(1, tile.resource + 0.0016 * delta * mult);
-        if (tile.type === TileType.FOREST)   tile.resource = Math.min(1, tile.resource + 0.0012 * delta * mult);
+        if (tile.type === TileType.FOREST) {
+          // CAD-203: fruit trees regrow slower (1/3 rate — 180 days vs 60)
+          const rate = tile.fruitTree ? 0.0004 : 0.0012;
+          tile.resource = Math.min(1, tile.resource + rate * delta * mult);
+        }
         if (tile.herbs     !== undefined)  tile.herbs     = Math.min(1, tile.herbs     + 0.0006 * delta * mult);
         if (tile.mushrooms !== undefined)  tile.mushrooms = Math.min(1, tile.mushrooms + 0.0008 * delta * mult);
         // flint does not regenerate
@@ -669,6 +676,30 @@ export class World {
 
   /** Find nearest tile of a given type within radius, from tile coords cx,cz.
    *  When multiple tiles tie for nearest, picks one at random to avoid biased drift. */
+  /**
+   * CAD-203: Find the nearest tile matching an arbitrary predicate.
+   * @param {number} cx - centre x
+   * @param {number} cz - centre z
+   * @param {function} predicate - (tile) => boolean
+   * @param {number} radius
+   * @returns {object|null} nearest tile or null
+   */
+  findNearestMatching(cx, cz, predicate, radius = 10) {
+    let best = null;
+    let bestDist = Infinity;
+    const r = Math.ceil(radius);
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const dist = Math.hypot(dx, dz);
+        if (dist > radius) continue;
+        const tile = this.getTile(cx + dx, cz + dz);
+        if (!tile || !predicate(tile)) continue;
+        if (dist < bestDist) { bestDist = dist; best = tile; }
+      }
+    }
+    return best;
+  }
+
   findNearest(cx, cz, types, radius = 10) {
     const typeSet = new Set(Array.isArray(types) ? types : [types]);
     let best = null;
