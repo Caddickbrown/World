@@ -131,7 +131,7 @@ async function init() {
   beeRenderer       = new BeeRenderer(wr.scene, world);
   flowerRenderer    = new FlowerRenderer(wr.scene, world);
   rabbitRenderer    = new RabbitRenderer(wr.scene, world);
-  eagleRenderer     = new EagleRenderer(wr.scene);
+  eagleRenderer     = new EagleRenderer(wr.scene, world);
   frogs             = createFrogs(world);        // CAD-95
   frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
   insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
@@ -289,7 +289,7 @@ async function init() {
     beeRenderer       = new BeeRenderer(wr.scene, world);
     flowerRenderer    = new FlowerRenderer(wr.scene, world);
     rabbitRenderer    = new RabbitRenderer(wr.scene, world);
-    eagleRenderer     = new EagleRenderer(wr.scene);
+    eagleRenderer     = new EagleRenderer(wr.scene, world);
     frogs             = createFrogs(world);         // CAD-95
     frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
     insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
@@ -376,7 +376,7 @@ async function init() {
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
         rabbitRenderer    = new RabbitRenderer(wr.scene, world);
-        eagleRenderer     = new EagleRenderer(wr.scene);
+        eagleRenderer     = new EagleRenderer(wr.scene, world);
         frogs             = createFrogs(world);
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
@@ -477,7 +477,7 @@ async function init() {
         beeRenderer       = new BeeRenderer(wr.scene, world);
         flowerRenderer    = new FlowerRenderer(wr.scene, world);
         rabbitRenderer    = new RabbitRenderer(wr.scene, world);
-        eagleRenderer     = new EagleRenderer(wr.scene);
+        eagleRenderer     = new EagleRenderer(wr.scene, world);
         frogs             = createFrogs(world);
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
