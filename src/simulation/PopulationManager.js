@@ -26,6 +26,31 @@ export class PopulationManager {
     this.SHEEP_PER_GRASS_TILE  = 0.05;
     this.HORSE_CAPACITY        = 8;
     this.REPRODUCTION_CHANCE   = 0.15; // per interval, per species, when below capacity
+
+    // CAD-213: Max sheep cap for the current 32×32 world.
+    // When the map expands to 128×128, this should scale proportionally
+    // (e.g. MAX_SHEEP_CAPACITY * (newSize / 32)^2 = 200 * 16 = 3200).
+    this.MAX_SHEEP_CAPACITY = 200;
+  }
+
+  /**
+   * CAD-213: Compute carrying capacity scaled to world size.
+   * Currently capped at MAX_SHEEP_CAPACITY (200) for the 32×32 map.
+   * When the map expands to 128×128, the cap should scale accordingly —
+   * this method is the single place to update that logic.
+   *
+   * @param {number} grassTiles - count of GRASS tiles in the world
+   * @param {number} worldSize  - current map side length (default: WORLD_WIDTH)
+   * @returns {number} carrying capacity
+   */
+  getCarryingCapacity(grassTiles, worldSize = WORLD_WIDTH) {
+    // Base rate: 5% of grass tiles support one sheep
+    const base = Math.floor(grassTiles * this.SHEEP_PER_GRASS_TILE);
+    // For 32×32: cap at 200. For larger worlds this cap will naturally lift
+    // because grass tile counts will grow with the map. Explicit size scaling
+    // is intentionally left as a future hook here for when map expansion lands.
+    const sizeScaledCap = Math.floor(this.MAX_SHEEP_CAPACITY * (worldSize / WORLD_WIDTH));
+    return Math.max(4, Math.min(base, sizeScaledCap));
   }
 
   /** Count grass tiles in the world (cached until world changes) */
@@ -68,7 +93,9 @@ export class PopulationManager {
     this._tickTimer = 0;
 
     const grassCount = this._countGrassTiles();
-    const sheepCapacity = Math.max(4, Math.floor(grassCount * this.SHEEP_PER_GRASS_TILE));
+    // CAD-213: Use getCarryingCapacity() so the 200-cap and size-scaling logic
+    // lives in one place. Previously this was: Math.max(4, Math.floor(grassCount * 0.05))
+    const sheepCapacity = this.getCarryingCapacity(grassCount);
     const horseCapacity = this.HORSE_CAPACITY;
 
     // ── Sheep population ────────────────────────────────────────────────

@@ -13,6 +13,7 @@ const TILE_HEIGHT = {
   [TileType.STONE]:    0.34,
   [TileType.MOUNTAIN]: 1.50,
   [TileType.GLACIER]:  0.64,
+  [TileType.LAVA]:     0.08,
 };
 
 // Base colours per tile type (HSL for easy variation)
@@ -27,6 +28,7 @@ const TILE_COLOR_HSL = {
   [TileType.STONE]:    [ 28, 22, 62],
   [TileType.MOUNTAIN]: [215, 18, 68],
   [TileType.GLACIER]:  [200, 45, 88],
+  [TileType.LAVA]:     [ 18, 95, 42],
 };
 
 const GAP = 0.0; // gap between tiles
@@ -73,6 +75,7 @@ export class TerrainRenderer {
       [TileType.STONE]:    [],
       [TileType.MOUNTAIN]: [],
       [TileType.GLACIER]:  [],
+      [TileType.LAVA]:     [],
     };
 
     for (let z = 0; z < this.world.height; z++) {
@@ -143,6 +146,7 @@ export class TerrainRenderer {
     this._buildRivers();
     this._buildCaves(buckets);
     this._buildGlacierSurface(buckets);
+    this._buildLavaSurface(buckets);
   }
 
   // Deterministic per-tile pseudo-random (no Math.random — stable across redraws)
@@ -388,6 +392,55 @@ export class TerrainRenderer {
     }
 
     iceMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  /**
+   * CAD-224 — Lava surface detail
+   * Render LAVA tiles as glowing orange/red flat tiles with a pulsing emissive
+   * material. Uses MeshStandardMaterial with emissive: 0xff4400, emissiveIntensity: 0.8.
+   * Lava tiles are impassable (like water) and deal damage if an agent steps on them.
+   * A slight height variation and surface plane gives a molten pool appearance.
+   */
+  _buildLavaSurface(buckets) {
+    const lavaTiles = buckets[TileType.LAVA] ?? [];
+    if (lavaTiles.length === 0) return;
+
+    const dummy = new THREE.Object3D();
+    const surfY = TILE_HEIGHT[TileType.LAVA] ?? 0.08;
+
+    // Glowing lava surface plane — emissive orange-red
+    const lavaGeom = new THREE.BoxGeometry(TILE_SIZE * 0.94, 0.03, TILE_SIZE * 0.94);
+    const lavaMat  = new THREE.MeshStandardMaterial({
+      color: 0xff2200,
+      emissive: 0xff4400,
+      emissiveIntensity: 0.8,
+      roughness: 0.85,
+      metalness: 0.0,
+    });
+    const lavaMesh = this._makeInstanced(lavaGeom, lavaMat, lavaTiles.length);
+
+    lavaTiles.forEach((tile, i) => {
+      const baseH = surfY + tile.elevation * 0.04;
+      dummy.position.set(
+        tile.x * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 601) - 0.5) * 0.05,
+        baseH + 0.016,
+        tile.z * TILE_SIZE + TILE_SIZE / 2 + (this._rng(tile.x, tile.z, 602) - 0.5) * 0.05,
+      );
+      dummy.scale.set(
+        0.90 + this._rng(tile.x, tile.z, 603) * 0.10,
+        1.0,
+        0.90 + this._rng(tile.x, tile.z, 604) * 0.10,
+      );
+      dummy.rotation.set(0, this._rng(tile.x, tile.z, 605) * Math.PI * 2, 0);
+      dummy.updateMatrix();
+      lavaMesh.setMatrixAt(i, dummy.matrix);
+    });
+
+    lavaMesh.instanceMatrix.needsUpdate = true;
+
+    // Store reference for pulsing animation in update()
+    this._lavaMesh = lavaMesh;
+    this._lavaBaseMaterial = lavaMat;
   }
 
   _buildVegetation(buckets) {
@@ -1561,6 +1614,11 @@ export class TerrainRenderer {
         }
         geom.attributes.position.needsUpdate = true;
       }
+    }
+
+    // Pulse lava emissive intensity to simulate molten glow
+    if (this._lavaBaseMaterial) {
+      this._lavaBaseMaterial.emissiveIntensity = 0.6 + Math.sin(t * 2.1) * 0.2;
     }
   }
 

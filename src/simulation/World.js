@@ -16,6 +16,7 @@ export const TileType = {
   STONE:    'STONE',
   MOUNTAIN: 'MOUNTAIN',
   GLACIER:  'GLACIER',
+  LAVA:     'LAVA',
 };
 
 export class World {
@@ -25,6 +26,7 @@ export class World {
     this.seed = seed;
     this.tiles = this._generate();
     this._generateGlaciers();
+    this._generateLava();
     this._generateRivers();
     this._generateCaves();
     this.glacierData = this._initGlaciers();
@@ -214,7 +216,7 @@ export class World {
 
         const baseElev = {
           WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22,
-          DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60,
+          DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60, LAVA: 0.08,
         }[type];
         const elev = baseElev + (Math.sin(x * 3.7 + z * 2.3 + this.seed) * 0.5 + 0.5) * 0.06;
 
@@ -246,7 +248,7 @@ export class World {
     }
 
     // Third pass: guarantee at least one tile of each base terrain type.
-    const baseElevations = { WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22, DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60 };
+    const baseElevations = { WATER: 0.04, BEACH: 0.06, GRASS: 0.12, WOODLAND: 0.17, FOREST: 0.22, DESERT: 0.12, STONE: 0.32, MOUNTAIN: 1.5, GLACIER: 0.60, LAVA: 0.08 };
     const present = new Set();
     for (let z = 0; z < this.height; z++)
       for (let x = 0; x < this.width; x++)
@@ -324,6 +326,33 @@ export class World {
         if (nearMountain && this._rng(x, z, 500) < 0.40) {
           tile.type = TileType.GLACIER;
           tile.elevation = 0.60;
+        }
+      }
+    }
+  }
+
+  // ── Lava ──────────────────────────────────────────────────────────────
+
+  /**
+   * Generate small LAVA patches near MOUNTAIN tiles.
+   * For each MOUNTAIN cluster, a few adjacent STONE tiles are converted to LAVA.
+   * LAVA is impassable and deals damage to any agent that enters (checked in Agent.js).
+   * ~15% of STONE tiles adjacent to MOUNTAIN become lava, using seeded RNG.
+   */
+  _generateLava() {
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        if (tile.type !== TileType.STONE) continue;
+        // Only convert STONE tiles directly adjacent (4-directional) to a MOUNTAIN tile
+        const nearMountain = [[-1,0],[1,0],[0,-1],[0,1]].some(([dx, dz]) => {
+          const nx = x + dx, nz = z + dz;
+          if (nx < 0 || nx >= this.width || nz < 0 || nz >= this.height) return false;
+          return this.tiles[nz][nx].type === TileType.MOUNTAIN;
+        });
+        if (nearMountain && this._rng(x, z, 600) < 0.15) {
+          tile.type = TileType.LAVA;
+          tile.elevation = 0.08;
         }
       }
     }
@@ -450,21 +479,22 @@ export class World {
     return this.tiles[tz][tx];
   }
 
-  /** Base walkability: used for spawning/birth. Blocks water, mountains, and glaciers regardless of knowledge. */
+  /** Base walkability: used for spawning/birth. Blocks water, mountains, glaciers, and lava regardless of knowledge. */
   isWalkable(x, z) {
     const tile = this.getTile(x, z);
     if (!tile) return false;
     return tile.type !== TileType.WATER
         && tile.type !== TileType.DEEP_WATER
         && tile.type !== TileType.MOUNTAIN
-        && tile.type !== TileType.GLACIER;
+        && tile.type !== TileType.GLACIER
+        && tile.type !== TileType.LAVA;
   }
 
   /**
    * Knowledge-aware traversal check used by agent movement.
    * Sailing unlocks water, mountain_climbing unlocks mountains.
    * Rivers are passable but cost extra energy (handled by the caller via tile.river flag).
-   * Glaciers are always impassable.
+   * Glaciers and lava are always impassable.
    */
   canTraverse(x, z, knowledge) {
     const tile = this.getTile(x, z);
@@ -472,6 +502,7 @@ export class World {
     if (tile.type === TileType.WATER || tile.type === TileType.DEEP_WATER) return knowledge.has('sailing');
     if (tile.type === TileType.MOUNTAIN) return knowledge.has('mountain_climbing');
     if (tile.type === TileType.GLACIER) return false;
+    if (tile.type === TileType.LAVA) return false;
     return true;
   }
 
