@@ -39,6 +39,14 @@ import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
 import { RainbowRenderer }    from './renderer/RainbowRenderer.js';
 import { FishShoal, initFishShoals } from './simulation/FishShoal.js';
 import { PopulationManager } from './simulation/PopulationManager.js';
+import { Wolf, createWolfPack } from './simulation/Wolf.js';
+import { Deer }                 from './simulation/Deer.js';
+import { Fox }                  from './simulation/Fox.js';
+import { Whale, createWhales }  from './simulation/Whale.js';
+import { WolfRenderer }         from './renderer/WolfRenderer.js';
+import { DeerRenderer }         from './renderer/DeerRenderer.js';
+import { FoxRenderer as FoxRnd } from './renderer/FoxRenderer.js';
+import { WhaleRenderer }        from './renderer/WhaleRenderer.js';
 
 // ── Web Worker: authoritative simulation runs off-main-thread ──────────────
 const simWorker = new Worker(
@@ -128,6 +136,14 @@ async function init() {
   let insectSwarmRenderer;
   let frogs = [];
   let rainbowRenderer;
+  let wolfPack = [];
+  let wolfRenderer;
+  let deer = [];
+  let deerRenderer;
+  let foxes = [];
+  let foxRenderer2;
+  let whales = [];
+  let whaleRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -167,6 +183,24 @@ async function init() {
   frogs             = createFrogs(world);        // CAD-95
   frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
   insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
+
+  // Wolf / Deer / Fox / Whale renderers (pure-renderer side; simulation runs in worker)
+  {
+    const packSpawn = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
+    wolfPack    = createWolfPack(packSpawn.x, packSpawn.z);
+    wolfRenderer = new WolfRenderer(wr.scene, wolfPack, world);
+
+    const deerSpawns = world.getWildHorseSpawnPoints(5);
+    deer        = deerSpawns.map(p => new Deer(p.x, p.z));
+    deerRenderer = new DeerRenderer(wr.scene, deer, world);
+
+    const foxSpawns = world.getWildHorseSpawnPoints(6);
+    foxes       = foxSpawns.map(p => new Fox(p.x, p.z));
+    foxRenderer2 = new FoxRnd(wr.scene, foxes, world);
+
+    whales       = createWhales(world);
+    whaleRenderer = new WhaleRenderer(wr.scene, whales, world);
+  }
 
   time = new TimeSystem();
   weather = new WeatherSystem(world.width, world.height);
@@ -309,6 +343,10 @@ async function init() {
     pigRenderer?.dispose();
     frogRenderer?.dispose();         // CAD-95
     insectSwarmRenderer?.dispose();  // CAD-92
+    wolfRenderer?.dispose();
+    deerRenderer?.dispose();
+    foxRenderer2?.dispose();
+    whaleRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
@@ -346,6 +384,21 @@ async function init() {
     frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
     insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
     animalSkillSystem.clear(); // CAD-87
+    {
+      const packSpawn = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
+      wolfPack.length = 0;
+      createWolfPack(packSpawn.x, packSpawn.z).forEach(w => wolfPack.push(w));
+      wolfRenderer  = new WolfRenderer(wr.scene, wolfPack, world);
+      deer.length   = 0;
+      world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+      deerRenderer  = new DeerRenderer(wr.scene, deer, world);
+      foxes.length  = 0;
+      world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+      foxRenderer2  = new FoxRnd(wr.scene, foxes, world);
+      whales.length = 0;
+      createWhales(world).forEach(w => whales.push(w));
+      whaleRenderer = new WhaleRenderer(wr.scene, whales, world);
+    }
 
     // CAD-197: reinitialise fish shoals for new world
     fishShoals = initFishShoals(world);
@@ -414,6 +467,10 @@ async function init() {
         eagleRenderer?.dispose();
         frogRenderer?.dispose();
         insectSwarmRenderer?.dispose();
+        wolfRenderer?.dispose();
+        deerRenderer?.dispose();
+        foxRenderer2?.dispose();
+        whaleRenderer?.dispose();
 
         world = new World(val);
         world.naturalFires = new Map();
@@ -443,6 +500,21 @@ async function init() {
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
         animalSkillSystem.clear();
+        {
+          const ps = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
+          wolfPack.length = 0;
+          createWolfPack(ps.x, ps.z).forEach(w => wolfPack.push(w));
+          wolfRenderer  = new WolfRenderer(wr.scene, wolfPack, world);
+          deer.length   = 0;
+          world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+          deerRenderer  = new DeerRenderer(wr.scene, deer, world);
+          foxes.length  = 0;
+          world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+          foxRenderer2  = new FoxRnd(wr.scene, foxes, world);
+          whales.length = 0;
+          createWhales(world).forEach(w => whales.push(w));
+          whaleRenderer = new WhaleRenderer(wr.scene, whales, world);
+        }
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -506,6 +578,10 @@ async function init() {
         eagleRenderer?.dispose();
         frogRenderer?.dispose();
         insectSwarmRenderer?.dispose();
+        wolfRenderer?.dispose();
+        deerRenderer?.dispose();
+        foxRenderer2?.dispose();
+        whaleRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
@@ -545,6 +621,21 @@ async function init() {
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
         animalSkillSystem.clear();
+        {
+          const ps = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
+          wolfPack.length = 0;
+          createWolfPack(ps.x, ps.z).forEach(w => wolfPack.push(w));
+          wolfRenderer  = new WolfRenderer(wr.scene, wolfPack, world);
+          deer.length   = 0;
+          world.getWildHorseSpawnPoints(5).forEach(p => deer.push(new Deer(p.x, p.z)));
+          deerRenderer  = new DeerRenderer(wr.scene, deer, world);
+          foxes.length  = 0;
+          world.getWildHorseSpawnPoints(6).forEach(p => foxes.push(new Fox(p.x, p.z)));
+          foxRenderer2  = new FoxRnd(wr.scene, foxes, world);
+          whales.length = 0;
+          createWhales(world).forEach(w => whales.push(w));
+          whaleRenderer = new WhaleRenderer(wr.scene, whales, world);
+        }
 
         minimap.world = world;
         minimap._renderTerrain();
@@ -1247,6 +1338,17 @@ async function init() {
     frogRenderer?.update(delta > 0 ? delta : 0);          // CAD-95
     insectSwarmRenderer?.update(delta > 0 ? delta : 0);   // CAD-92
     rainbowRenderer?.update(realDelta);                    // CAD-121 (always real time)
+    // Wolf / Deer / Fox / Whale — tick simulation + renderer each frame
+    if (delta > 0) {
+      for (const w of wolfPack) w.tick(delta, world, agents, []);
+      for (const d of deer)     d.tick(delta, world, agents, wolfPack);
+      for (const f of foxes)    f.tick(delta, world, agents);
+      for (const wh of whales)  wh.tick(delta, world);
+    }
+    wolfRenderer?.update();
+    deerRenderer?.update();
+    foxRenderer2?.update();
+    whaleRenderer?.update(wr.camera);
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
     checkChunkVisibility(); // CAD-218: load/unload terrain chunks based on camera position
@@ -1584,6 +1686,7 @@ async function init() {
         for (const { x, z, type } of msg.tileChanges) {
           const tile = world.getTile(x, z);
           if (tile) tile.type = type;
+          terrainRenderer.markTileDirty(x, z);
         }
       }
 

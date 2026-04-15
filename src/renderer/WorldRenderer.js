@@ -15,11 +15,11 @@ export class WorldRenderer {
     // ── Scene ──────────────────────────────────────────────────────────
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(SKY_COLOR);
-    this.scene.fog = new THREE.FogExp2(SKY_COLOR, 0.006);
+    this.scene.fog = new THREE.FogExp2(SKY_COLOR, 0.003);
 
     // Sky colour lerp targets
     this._targetSky = new THREE.Color(SKY_COLOR);
-    this._targetFog = 0.006;
+    this._targetFog = 0.003;
     this._timeOfDay = 0.5; // 0=midnight, 0.5=noon
     this._weatherSunMult = 1;
 
@@ -45,7 +45,7 @@ export class WorldRenderer {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
     this.controls.minDistance = 6;
-    this.controls.maxDistance = 120;
+    this.controls.maxDistance = 320;
     this.controls.maxPolarAngle = Math.PI / 2.1;
     this.controls.update();
 
