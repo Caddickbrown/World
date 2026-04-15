@@ -35,6 +35,7 @@ import { createFrogs }       from './simulation/Frog.js';
 import { FrogRenderer }      from './renderer/FrogRenderer.js';
 import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
 import { RainbowRenderer }    from './renderer/RainbowRenderer.js';
+import { FishShoal, initFishShoals } from './simulation/FishShoal.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -146,6 +147,9 @@ async function init() {
   const disasterSystem   = new DisasterSystem();
   const ecologySystem    = new EcologySystem();
   const animalSkillSystem = new AnimalSkillSystem(); // CAD-87
+
+  // CAD-197: Fish shoals — 3-5 shoals in shallow water zones
+  let fishShoals = initFishShoals(world);
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
@@ -299,6 +303,9 @@ async function init() {
     frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
     insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
     animalSkillSystem.clear(); // CAD-87
+
+    // CAD-197: reinitialise fish shoals for new world
+    fishShoals = initFishShoals(world);
 
     time.gameTime = (8 / 24) * 120; // reset to 08:00
     birthGameTimes.length = 0;
@@ -1146,6 +1153,18 @@ async function init() {
       world.updateCows(delta);
       world.updateGlaciers(delta, weather.temperature ?? 20);
       world.updateDomestication(delta, buildingRenderer?.buildings ?? []);
+
+      // CAD-197: Tick fish shoals (boids movement + replenishment)
+      for (const shoal of fishShoals) shoal.tick(delta, world);
+
+      // CAD-197: Agents with fishing concept catch fish from nearby shoals
+      for (const agent of agents) {
+        if (agent?.health > 0 && agent.knowledge.has('fishing') && agent.state === 'fishing') {
+          for (const shoal of fishShoals) {
+            if (shoal.tryFish(agent, itemDefs.size > 0 ? itemDefs : null)) break;
+          }
+        }
+      }
 
       // Tick wild horse simulation
       for (const horse of horses) horse.tick(delta, world, horses);
