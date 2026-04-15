@@ -29,6 +29,12 @@ function rotateFacingToward(fx, fz, tx, tz, maxRad) {
   return { x: Math.sin(a), z: Math.cos(a) };
 }
 
+const FOX_FEAR_RADIUS  = 3;   // CAD-195: distance at which agents raise fox fear
+const FEAR_RISE_RATE   = 0.1; // per second when threat within radius
+const FEAR_DECAY_RATE  = 0.05; // per second when safe
+const FEAR_FLEE_THRESH = 0.7;  // flee when fearLevel exceeds this
+const FEAR_CALM_THRESH = 0.2;  // resume normal behaviour below this
+
 export class Fox {
   constructor(x, z) {
     this.x = x;
@@ -44,7 +50,9 @@ export class Fox {
     this._retargetIn = 0.5;
     this.walkPhase = Math.random() * Math.PI * 2;
 
-    // Burst state (when startled by agent)
+    // CAD-195: Fear system
+    this.fearLevel = 0; // 0–1
+    // Legacy burst state kept for compatibility
     this._burstTimer = 0;
     this.isStartled = false;
   }
@@ -72,7 +80,7 @@ export class Fox {
   tick(delta, world, agents = []) {
     this.walkPhase += delta * (this.isStartled ? BURST_SPEED : NORMAL_SPEED) * 2.8;
 
-    // Check if any agent is within burst detection range
+    // CAD-195: Fear system — proximity raises fear, distance decays it
     let nearestAgentDist = Infinity;
     let nearestAx = this.x, nearestAz = this.z;
     for (const agent of agents) {
@@ -85,10 +93,16 @@ export class Fox {
       }
     }
 
-    if (nearestAgentDist < BURST_DETECT_DIST) {
+    if (nearestAgentDist < FOX_FEAR_RADIUS) {
+      this.fearLevel = Math.min(1, this.fearLevel + FEAR_RISE_RATE * delta);
+    } else {
+      this.fearLevel = Math.max(0, this.fearLevel - FEAR_DECAY_RATE * delta);
+    }
+
+    // Sync legacy isStartled flag from fearLevel
+    if (this.fearLevel > FEAR_FLEE_THRESH) {
       this._burstTimer = BURST_DURATION;
       this.isStartled = true;
-      // Flee directly away from agent
       const fleeAng = Math.atan2(this.z - nearestAz, this.x - nearestAx);
       const fleeDist = WANDER_RADIUS_MAX;
       const tx = Math.floor(this.x + Math.cos(fleeAng) * fleeDist);
@@ -101,9 +115,15 @@ export class Fox {
       }
       this.gait = 'run';
       this._retargetIn = BURST_DURATION;
+    } else if (this.fearLevel < FEAR_CALM_THRESH) {
+      if (this.isStartled) {
+        this.isStartled = false;
+        this._burstTimer = 0;
+        this.gait = 'walk';
+      }
     } else if (this._burstTimer > 0) {
       this._burstTimer = Math.max(0, this._burstTimer - delta);
-      if (this._burstTimer <= 0) {
+      if (this._burstTimer <= 0 && this.fearLevel < FEAR_CALM_THRESH) {
         this.isStartled = false;
         this.gait = 'walk';
       }

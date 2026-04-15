@@ -4,8 +4,16 @@ import { TerrainRenderer } from './TerrainRenderer.js';
 
 const RABBIT_COUNT = 8;
 const WANDER_SPEED  = 0.3;  // tiles/sec
+const FLEE_SPEED    = 1.4;  // tiles/sec when frightened
 const HOP_INTERVAL  = 1.4;  // seconds between hops
 const HOP_HEIGHT    = 0.18; // world units, peak of hop
+
+// CAD-195: Fear system constants
+const RABBIT_FEAR_RADIUS = 5;
+const FEAR_RISE_RATE     = 0.1;
+const FEAR_DECAY_RATE    = 0.05;
+const FEAR_FLEE_THRESH   = 0.7;
+const FEAR_CALM_THRESH   = 0.2;
 
 function seededRand(seed) {
   let s = seed;
@@ -101,43 +109,66 @@ export class RabbitRenderer {
         wanderTimer: rand() * 3,
         hopTimer: rand() * HOP_INTERVAL,
         hopPhase: 0, // 0 = grounded, >0 = mid-hop
+        fearLevel: 0, // CAD-195
       });
     }
   }
 
-  update(delta) {
+  update(delta, agents = []) {
     for (const r of this._rabbits) {
-      // Wander direction change
-      r.wanderTimer -= delta;
-      if (r.wanderTimer <= 0) {
-        r.wanderTimer = 1.5 + Math.random() * 2.5;
-        r.wanderAngle += (Math.random() - 0.5) * Math.PI;
+      // CAD-195: Fear system — update fearLevel based on agent proximity
+      let nearestDist = Infinity;
+      let nearestAx = r.x, nearestAz = r.z;
+      for (const agent of agents) {
+        if (!agent || agent.health <= 0) continue;
+        const d = Math.hypot(agent.x - r.x, agent.z - r.z);
+        if (d < nearestDist) { nearestDist = d; nearestAx = agent.x; nearestAz = agent.z; }
+      }
+      if (nearestDist < RABBIT_FEAR_RADIUS) {
+        r.fearLevel = Math.min(1, r.fearLevel + FEAR_RISE_RATE * delta);
+      } else {
+        r.fearLevel = Math.max(0, r.fearLevel - FEAR_DECAY_RATE * delta);
       }
 
-      // Hop logic
+      const isFleeing = r.fearLevel > FEAR_FLEE_THRESH;
+      if (isFleeing && nearestDist < Infinity) {
+        // Flee directly away from nearest agent
+        r.wanderAngle = Math.atan2(r.x - nearestAx, r.z - nearestAz);
+      }
+
+      // Wander direction change (only when calm)
+      if (!isFleeing) {
+        r.wanderTimer -= delta;
+        if (r.wanderTimer <= 0) {
+          r.wanderTimer = 1.5 + Math.random() * 2.5;
+          r.wanderAngle += (Math.random() - 0.5) * Math.PI;
+        }
+      }
+
+      // Hop logic — faster hops when fleeing
       r.hopTimer -= delta;
+      const hopInterval = isFleeing ? HOP_INTERVAL * 0.35 : HOP_INTERVAL * (0.7 + Math.random() * 0.6);
       if (r.hopTimer <= 0) {
-        r.hopTimer = HOP_INTERVAL * (0.7 + Math.random() * 0.6);
-        r.hopPhase = 0.32; // hop duration in seconds
+        r.hopTimer = hopInterval;
+        r.hopPhase = 0.32;
       }
 
+      const speed = isFleeing ? FLEE_SPEED : WANDER_SPEED;
       let yOffset = 0;
       if (r.hopPhase > 0) {
         r.hopPhase -= delta;
         const t = Math.max(0, r.hopPhase) / 0.32;
         yOffset = HOP_HEIGHT * Math.sin(t * Math.PI);
 
-        // Move forward during hop
-        const dx = Math.sin(r.wanderAngle) * WANDER_SPEED * delta;
-        const dz = Math.cos(r.wanderAngle) * WANDER_SPEED * delta;
+        const dx = Math.sin(r.wanderAngle) * speed * delta;
+        const dz = Math.cos(r.wanderAngle) * speed * delta;
         const nx = r.x + dx;
         const nz = r.z + dz;
 
-        // Only move if tile is GRASS
         const tx = Math.floor(nx);
         const tz = Math.floor(nz);
         const tile = this.world.getTile(tx, tz);
-        if (tile?.type === TileType.GRASS) {
+        if (tile?.type === TileType.GRASS || tile?.type === TileType.WOODLAND) {
           r.x = nx;
           r.z = nz;
         } else {
@@ -145,7 +176,6 @@ export class RabbitRenderer {
         }
       }
 
-      // Face direction of travel
       r.group.rotation.y = -r.wanderAngle;
       r.group.position.set(r.x * 2, r.baseY + yOffset, r.z * 2);
     }

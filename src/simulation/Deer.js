@@ -8,6 +8,13 @@ const WANDER_SPEED = 0.6;
 const FLEE_SPEED = 2.2;
 const FLEE_DETECT_DIST = 8;
 
+// CAD-195: Fear system constants
+const DEER_FEAR_RADIUS  = 8;
+const FEAR_RISE_RATE    = 0.1;
+const FEAR_DECAY_RATE   = 0.05;
+const FEAR_FLEE_THRESH  = 0.7;
+const FEAR_CALM_THRESH  = 0.2;
+
 function deerTileOk(world, tx, tz) {
   const tile = world.getTile(tx, tz);
   if (!tile) return false;
@@ -45,6 +52,9 @@ export class Deer {
 
     this.isFleeing = false;
     this.alertLevel = 0; // 0-1, used by renderer for head raise
+
+    // CAD-195: Fear system
+    this.fearLevel = 0; // 0–1
   }
 
   _pickTarget(world) {
@@ -96,11 +106,19 @@ export class Deer {
       }
     }
 
+    // CAD-195: Fear system — update fearLevel based on nearest threat within radius
+    if (isThreatNear) {
+      this.fearLevel = Math.min(1, this.fearLevel + FEAR_RISE_RATE * delta);
+    } else {
+      this.fearLevel = Math.max(0, this.fearLevel - FEAR_DECAY_RATE * delta);
+    }
+
     // Smoothly blend alert level
     const targetAlert = isThreatNear ? 1.0 : 0.0;
     this.alertLevel += (targetAlert - this.alertLevel) * Math.min(1, delta * 4);
 
-    if (isThreatNear) {
+    // Flee when fear exceeds threshold; resume normal when calm
+    if (this.fearLevel > FEAR_FLEE_THRESH || isThreatNear) {
       this.isFleeing = true;
       const mag = Math.hypot(fleeX, fleeZ) || 1;
       const nx = fleeX / mag;
@@ -119,9 +137,12 @@ export class Deer {
       }
       this.gait = 'run';
       this._retargetIn = 1.5;
-    } else {
+    } else if (this.fearLevel < FEAR_CALM_THRESH) {
       this.isFleeing = false;
       this._retargetIn -= delta;
+    } else {
+      // Fear decaying but not yet calm — continue fleeing if already fleeing
+      if (!this.isFleeing) this._retargetIn -= delta;
     }
 
     const dx = this.targetX - this.x;
