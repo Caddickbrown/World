@@ -2,8 +2,8 @@ import { TileItems } from './TileItems.js';
 import { SpatialGrid } from './SpatialGrid.js';
 
 export const TILE_SIZE = 2;
-export const WORLD_WIDTH = 32;
-export const WORLD_HEIGHT = 32;
+export const WORLD_WIDTH = 128;
+export const WORLD_HEIGHT = 128;
 
 export const TileType = {
   DEEP_WATER: 'DEEP_WATER',
@@ -43,7 +43,7 @@ export class World {
     /** Active predators in the world */
     this.predators = [];
     /** Spatial index for fast agent proximity queries */
-    this.spatialGrid = new SpatialGrid(WORLD_WIDTH, WORLD_HEIGHT, 4);
+    this.spatialGrid = new SpatialGrid(WORLD_WIDTH, WORLD_HEIGHT, 8);
     /** Timer for flora slow tick (tracked by main.js) */
     this.floraSlowTimer = 0;
     /** Current game day — updated by main.js each tick via world.day = time.day */
@@ -200,10 +200,10 @@ export class World {
   _noise(x, z) {
     const s = this.seed * 0.137;
     return (
-      Math.sin(x * 0.18 + s)        * Math.cos(z * 0.14 + s * 1.71) * 0.45 +
-      Math.sin(x * 0.35 + s * 2.13) * Math.cos(z * 0.29 + s * 0.63) * 0.30 +
-      Math.sin(x * 0.72 + s * 0.54) * Math.cos(z * 0.61 + s * 1.23) * 0.15 +
-      Math.cos(x * 0.11 + z * 0.16 + s * 1.87)                       * 0.25
+      Math.sin(x * 0.045 + s)        * Math.cos(z * 0.035 + s * 1.71) * 0.45 +
+      Math.sin(x * 0.088 + s * 2.13) * Math.cos(z * 0.073 + s * 0.63) * 0.30 +
+      Math.sin(x * 0.180 + s * 0.54) * Math.cos(z * 0.153 + s * 1.23) * 0.15 +
+      Math.cos(x * 0.028 + z * 0.040 + s * 1.87)                       * 0.25
     ) / 1.15;
   }
 
@@ -227,9 +227,9 @@ export class World {
         if (type === TileType.GRASS || type === TileType.WOODLAND || type === TileType.FOREST) {
           const s = this.seed * 0.491;
           const arid = (
-            Math.sin(x * 0.09 + s)        * Math.cos(z * 0.07 + s * 1.6) * 0.50 +
-            Math.sin(x * 0.17 + s * 1.9)  * Math.cos(z * 0.13 + s * 0.5) * 0.30 +
-            Math.cos(x * 0.05 + z * 0.08 + s * 1.2)                       * 0.20
+            Math.sin(x * 0.023 + s)        * Math.cos(z * 0.018 + s * 1.6) * 0.50 +
+            Math.sin(x * 0.043 + s * 1.9)  * Math.cos(z * 0.033 + s * 0.5) * 0.30 +
+            Math.cos(x * 0.013 + z * 0.020 + s * 1.2)                       * 0.20
           ) / 1.0 + 0.5; // range ≈ 0–1
           if (arid > 0.91) type = TileType.DESERT;
         }
@@ -278,12 +278,12 @@ export class World {
         present.add(tiles[z][x].type);
 
     const forcePlacements = [
-      { type: TileType.WATER,    x: 2,  z: 2  },
-      { type: TileType.GRASS,    x: 14, z: 14 },
-      { type: TileType.WOODLAND, x: 16, z: 14 },
-      { type: TileType.FOREST,   x: 17, z: 14 },
-      { type: TileType.STONE,    x: 14, z: 17 },
-      { type: TileType.MOUNTAIN, x: 29, z: 29 },
+      { type: TileType.WATER,    x: 8,   z: 8   },
+      { type: TileType.GRASS,    x: 56,  z: 56  },
+      { type: TileType.WOODLAND, x: 64,  z: 56  },
+      { type: TileType.FOREST,   x: 68,  z: 56  },
+      { type: TileType.STONE,    x: 56,  z: 68  },
+      { type: TileType.MOUNTAIN, x: 116, z: 116 },
     ];
     for (const { type, x, z } of forcePlacements) {
       if (!present.has(type)) {
@@ -322,7 +322,66 @@ export class World {
       }
     }
 
-    return tiles;
+    // Fifth pass: fix water connectivity — remove isolated water bodies
+    this.tiles = tiles;
+    this._fixWaterConnectivity();
+    return this.tiles;
+  }
+
+  _fixWaterConnectivity() {
+    const visited = new Set();
+    const bodies = [];
+
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        if ((tile.type === TileType.WATER || tile.type === TileType.DEEP_WATER) && !visited.has(`${x},${z}`)) {
+          // BFS this water body
+          const body = [];
+          const queue = [{x, z}];
+          while (queue.length) {
+            const {x: cx, z: cz} = queue.shift();
+            const key = `${cx},${cz}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+            const t = this.tiles[cz]?.[cx];
+            if (!t || (t.type !== TileType.WATER && t.type !== TileType.DEEP_WATER)) continue;
+            body.push({x: cx, z: cz});
+            queue.push({x: cx+1, z: cz}, {x: cx-1, z: cz}, {x: cx, z: cz+1}, {x: cx, z: cz-1});
+          }
+          bodies.push(body);
+        }
+      }
+    }
+
+    // Remove isolated water bodies (< 4 tiles)
+    for (const body of bodies) {
+      if (body.length < 4) {
+        for (const {x, z} of body) {
+          this.tiles[z][x].type = TileType.BEACH;
+        }
+      }
+    }
+
+    // Coastal smoothing: isolated BEACH surrounded by 5+ GRASS → GRASS
+    // GRASS surrounded by 4+ WATER → BEACH
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        const tile = this.tiles[z][x];
+        const neighbors = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]].map(([dx,dz]) => {
+          const nx = x+dx, nz = z+dz;
+          if (nx<0||nx>=this.width||nz<0||nz>=this.height) return null;
+          return this.tiles[nz][nx].type;
+        }).filter(Boolean);
+        if (tile.type === TileType.BEACH) {
+          const grassCount = neighbors.filter(t => t === TileType.GRASS || t === TileType.WOODLAND || t === TileType.FOREST).length;
+          if (grassCount >= 5) tile.type = TileType.GRASS;
+        } else if (tile.type === TileType.GRASS) {
+          const waterCount = neighbors.filter(t => t === TileType.WATER || t === TileType.DEEP_WATER).length;
+          if (waterCount >= 4) tile.type = TileType.BEACH;
+        }
+      }
+    }
   }
 
   // ── Glaciers (tile-type generation) ──────────────────────────────────
@@ -397,7 +456,7 @@ export class World {
    */
   _generateRivers() {
     const RIVER_SEED_CHANCE = 0.08;
-    const MAX_RIVER_LENGTH  = 24;
+    const MAX_RIVER_LENGTH  = 96;
     const TERMINAL_TYPES = new Set([TileType.WATER, TileType.DEEP_WATER, TileType.BEACH]);
     const BLOCKED_TYPES  = new Set([TileType.GLACIER, TileType.MOUNTAIN]);
 
