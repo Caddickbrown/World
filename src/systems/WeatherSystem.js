@@ -59,6 +59,10 @@ export class WeatherSystem {
     // Legacy compat: expose dominant zone state as `current`
     this.current = 'CLEAR';
 
+    // CAD-121: Rainbow state
+    this.rainbow       = false;  // true while rainbow is visible
+    this._rainbowTimer = 0;      // counts down from 60 seconds
+
     /**
      * Lightning flash state. Set during a strike; consumers (renderer / main.js)
      * should read this each frame and clear it once displayed.
@@ -135,7 +139,21 @@ export class WeatherSystem {
       }
     }
 
+    const prevDominant = this.current;
     this.current = dominant;
+
+    // CAD-121: Rainbow — trigger when rain/storm clears to CLEAR
+    if ((prevDominant === 'RAIN' || prevDominant === 'STORM') && dominant === 'CLEAR') {
+      this.rainbow       = true;
+      this._rainbowTimer = 60;
+    }
+    if (this.rainbow) {
+      this._rainbowTimer -= delta;
+      if (this._rainbowTimer <= 0) {
+        this.rainbow       = false;
+        this._rainbowTimer = 0;
+      }
+    }
 
     // Tick lightning flash timer
     if (this.lightningFlash) {

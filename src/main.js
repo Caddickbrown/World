@@ -34,6 +34,7 @@ import { AnimalSkillSystem } from './systems/AnimalSkillSystem.js';
 import { createFrogs }       from './simulation/Frog.js';
 import { FrogRenderer }      from './renderer/FrogRenderer.js';
 import { InsectSwarmRenderer } from './renderer/InsectSwarmRenderer.js';
+import { RainbowRenderer }    from './renderer/RainbowRenderer.js';
 
 const AGENT_COUNT = 12;
 const WILD_HORSE_COUNT = 4;
@@ -109,6 +110,7 @@ async function init() {
   let frogRenderer;
   let insectSwarmRenderer;
   let frogs = [];
+  let rainbowRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -138,6 +140,7 @@ async function init() {
 
   time = new TimeSystem();
   weather = new WeatherSystem(world.width, world.height);
+  rainbowRenderer = new RainbowRenderer(wr.scene, weather); // CAD-121
 
   // ── Simulation systems ─────────────────────────────────────────────────
   const disasterSystem   = new DisasterSystem();
@@ -301,6 +304,7 @@ async function init() {
     for (const k of Object.keys(heatmap)) delete heatmap[k];
     weather.current = 'CLEAR';
     weather._timer  = 0;
+    weather.rainbow = false; weather._rainbowTimer = 0; // CAD-121
     gameOver = false;
     if (gameOverAutoResetId) {
       clearTimeout(gameOverAutoResetId);
@@ -1090,8 +1094,10 @@ async function init() {
       if (weather.current !== prevWeather) {
         if (weather.current === 'STORM')  showNotification('A storm rolls in...', 'env');
         if (weather.current === 'RAIN')   showNotification('Rain begins to fall.', 'env');
-        if (weather.current === 'CLEAR' && (prevWeather === 'STORM' || prevWeather === 'RAIN'))
+        if (weather.current === 'CLEAR' && (prevWeather === 'STORM' || prevWeather === 'RAIN')) {
           showNotification('The skies clear.', 'env');
+          showNotification('🌈 A rainbow arcs across the sky!', 'env'); // CAD-121
+        }
         audio.playEvent('weather_change');
       }
 
@@ -1383,6 +1389,7 @@ async function init() {
     eagleRenderer?.update(delta > 0 ? delta : 0);
     frogRenderer?.update(delta > 0 ? delta : 0);          // CAD-95
     insectSwarmRenderer?.update(delta > 0 ? delta : 0);   // CAD-92
+    rainbowRenderer?.update(realDelta);                    // CAD-121 (always real time)
     wr.updateRain(realDelta, weather.isRaining, weather.isStorm);
     minimap.update(agents);
     wr.render();
