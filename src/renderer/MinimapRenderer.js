@@ -14,7 +14,7 @@ export class MinimapRenderer {
     this.canvas.height = size;
     this.canvas.style.cssText = `
       position: fixed;
-      bottom: 12px;
+      bottom: 60px;
       right: 12px;
       width: ${size}px;
       height: ${size}px;
