@@ -1288,6 +1288,10 @@ async function init() {
       // ── SettlementSystem tick ───────────────────────────────────────────
       settlementSystem.tick(delta, agents, world, time.day);
       settlementSystem.updateMembership(agents);
+      // CAD-178: Expose settlementSystem on world so agents can access it
+      world._settlementSystem = settlementSystem;
+      // CAD-178/180: Tick resources and cultural drift
+      settlementSystem.tickResources(delta, time.day);
       for (const s of settlementSystem.settlements) {
         settlementSystem.nameSettlement(s, agents);
       }
@@ -1303,6 +1307,13 @@ async function init() {
           }
         }
         s._prevMemberIds = new Set(s.memberIds);
+      }
+      // CAD-179: Process contact events from trader arrivals
+      if (world._contactEvents && world._contactEvents.length > 0) {
+        for (const evt of world._contactEvents) {
+          settlementSystem.recordContact(evt.fromId, evt.toId, evt.day, agents, historyLog);
+        }
+        world._contactEvents = [];
       }
 
       // ── Achievements tick ───────────────────────────────────────────────

@@ -67,6 +67,13 @@ export class SettlementSystem {
               population: memberIds.length,
               // CAD-181: settlement-level knowledge pool
               knowledgePool: new Set(),
+              // CAD-178: settlement resource stores
+              resources: { wood: 10, food: 10, stone: 10 },
+              // CAD-179: inter-settlement contact log { settlementId, day }[]
+              contactLog: [],
+              // CAD-180: cultural identity
+              culture: { dialect: Math.random(), traditions: [], beliefs: [] },
+              lastContactDay: null,
             };
             this.settlements.push(settlement);
             // Reset timers for founding members
@@ -79,6 +86,96 @@ export class SettlementSystem {
         this.agentTimers.delete(agent.id);
       }
     }
+  }
+
+  /**
+   * CAD-178: Passively grow settlement resources over time based on member count.
+   * CAD-180: Tick cultural drift for isolated settlements.
+   * @param {number} delta
+   * @param {number} currentDay
+   */
+  tickResources(delta, currentDay) {
+    for (const s of this.settlements) {
+      if (!s.resources) s.resources = { wood: 10, food: 10, stone: 10 };
+      const pop = s.memberIds.length;
+      // Slow resource accumulation proportional to population
+      s.resources.wood  = Math.min(200, (s.resources.wood  || 0) + pop * delta * 0.02);
+      s.resources.food  = Math.min(200, (s.resources.food  || 0) + pop * delta * 0.03);
+      s.resources.stone = Math.min(200, (s.resources.stone || 0) + pop * delta * 0.01);
+
+      // CAD-180: Cultural drift — isolated settlements diverge over time
+      if (!s.culture) {
+        s.culture = { dialect: Math.random(), traditions: [], beliefs: [] };
+        s.lastContactDay = null;
+      }
+      const daysSinceContact = s.lastContactDay != null ? (currentDay - s.lastContactDay) : currentDay;
+      if (daysSinceContact >= 50) {
+        // Dialect drifts ±0.02 per day
+        const drift = (Math.random() < 0.5 ? 1 : -1) * 0.02 * delta * (1 / 86400) * 1000;
+        s.culture.dialect = Math.max(0, Math.min(1, s.culture.dialect + drift));
+      }
+    }
+  }
+
+  /**
+   * CAD-179: Record contact event between two settlements (called by main.js on trader arrival).
+   * If target doesn't have a concept that source has, 30% chance to teach it.
+   * @param {number} fromSettlementId
+   * @param {number} toSettlementId
+   * @param {number} currentDay
+   * @param {object[]} agents
+   * @param {object} historyLog
+   * @returns {string|null} concept taught, or null
+   */
+  recordContact(fromSettlementId, toSettlementId, currentDay, agents, historyLog) {
+    const fromS = this.settlements.find(s => s.id === fromSettlementId);
+    const toS   = this.settlements.find(s => s.id === toSettlementId);
+    if (!fromS || !toS) return null;
+
+    fromS.lastContactDay = currentDay;
+    toS.lastContactDay   = currentDay;
+
+    if (!fromS.contactLog) fromS.contactLog = [];
+    if (!toS.contactLog)   toS.contactLog   = [];
+    fromS.contactLog.push({ settlementId: toSettlementId, day: currentDay });
+    toS.contactLog.push({ settlementId: fromSettlementId, day: currentDay });
+
+    // CAD-179: Knowledge diffusion — 30% chance to teach a concept
+    // CAD-180: Slower diffusion if dialect difference > 0.3
+    const dialectDiff = Math.abs((fromS.culture?.dialect || 0) - (toS.culture?.dialect || 0));
+    const baseChance = 0.30;
+    const diffusionChance = dialectDiff > 0.3 ? baseChance * 0.4 : baseChance;
+
+    // Find concepts fromS has that toS doesn't
+    const fromConcepts = new Set();
+    for (const agId of fromS.memberIds) {
+      const ag = agents.find(a => a.id === agId);
+      if (ag) for (const c of ag.knowledge) fromConcepts.add(c);
+    }
+    const toConcepts = new Set();
+    for (const agId of toS.memberIds) {
+      const ag = agents.find(a => a.id === agId);
+      if (ag) for (const c of ag.knowledge) toConcepts.add(c);
+    }
+
+    const unique = [...fromConcepts].filter(c => !toConcepts.has(c));
+    if (unique.length > 0 && Math.random() < diffusionChance) {
+      const concept = unique[Math.floor(Math.random() * unique.length)];
+      // Teach concept to one random member of toS
+      const toMembers = agents.filter(a => toS.memberIds.includes(a.id) && a.health > 0);
+      if (toMembers.length > 0) {
+        const learner = toMembers[Math.floor(Math.random() * toMembers.length)];
+        learner.knowledge.add(concept);
+        toS.knowledgePool?.add(concept);
+        const fromName = fromS.name || `Camp ${fromS.id}`;
+        const toName   = toS.name   || `Camp ${toS.id}`;
+        if (historyLog) {
+          historyLog.add('discovery', `${toName} learned ${concept} from ${fromName} traders`, currentDay);
+        }
+        return concept;
+      }
+    }
+    return null;
   }
 
   /**

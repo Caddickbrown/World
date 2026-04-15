@@ -19,6 +19,8 @@ export const AgentState = {
   DISCOVERING: 'discovering',
   FISHING:     'fishing',
   PERFORMING:  'performing',
+  // CAD-178: Trader agents travel between settlements
+  TRADING:     'trading',
 };
 
 export class Agent {
@@ -120,6 +122,13 @@ export class Agent {
 
     // CAD-184: Role assigned at age 10 based on personality + available concepts
     this.role = null;
+
+    // CAD-178: Trader journey state
+    this.traderState = null;    // null | 'outbound' | 'returning'
+    this.traderTargetSettlementId = null;
+    this.traderHomeSettlementId = null;
+    this.traderCargo = [];      // items loaded for the trip
+    this._traderCooldown = 60 + Math.random() * 60; // initial cooldown before first journey
   }
 
   static get TASKS() {
@@ -128,6 +137,8 @@ export class Agent {
       teacher:  { icon: '📢', name: 'Teacher', seekSocial: true, spreadBonus: 1.1 },
       scout:    { icon: '🔭', name: 'Scout', wanderRadiusBonus: 3, discoveryBonus: 1.15 },
       carer:    { icon: '💚', name: 'Carer', restThreshold: 0.35, restBonus: 1.1 },
+      // CAD-178: Trader role — travels between settlements carrying resources
+      trader:   { icon: '🛒', name: 'Trader', isTrader: true },
     };
   }
 
@@ -199,7 +210,11 @@ export class Agent {
 
   _adoptTask(allAgents) {
     if (this.task || !this.knowledge.has('organisation')) return;
-    const tasks = Object.keys(Agent.TASKS);
+    // CAD-178: trader role also requires trade knowledge
+    const tasks = Object.keys(Agent.TASKS).filter(t => {
+      if (t === 'trader') return this.knowledge.has('trade');
+      return true;
+    });
     const taken = new Set(allAgents.filter(a => a.task).map(a => a.task));
     const available = tasks.filter(t => !taken.has(t));
     const pool = available.length > 0 ? available : tasks;
@@ -210,6 +225,7 @@ export class Agent {
       if (t === 'teacher')  return 0.5 + this.personality.sociability;
       if (t === 'scout')    return 0.5 + this.personality.curiosity;
       if (t === 'carer')    return 0.5 + this.personality.caution;
+      if (t === 'trader')   return 0.5 + this.personality.sociability * 0.5 + this.personality.curiosity * 0.5;
       return 1.0;
     });
     const totalW = weights.reduce((s, w) => s + w, 0);
@@ -409,6 +425,14 @@ export class Agent {
       return;
     }
 
+    // ── CAD-178: Trader journey ────────────────────────────────────────
+    if (this.state === AgentState.TRADING) {
+      // Trader movement is handled by the normal move-toward-target block below.
+      // This block handles arrival logic and cooldown tick.
+      if (this._traderCooldown > 0) this._traderCooldown -= delta;
+      return;
+    }
+
     // ── Periodic needs re-evaluation (even mid-wander) ────────────────
     this._needsCheckTimer -= delta;
     if (this._needsCheckTimer <= 0) {
@@ -416,6 +440,11 @@ export class Agent {
       if (this.state === AgentState.WANDERING || this.state === AgentState.DISCOVERING) {
         this._decideAction(world, allAgents, conceptGraph, this._timeSystem);
       }
+    }
+
+    // CAD-178: Tick trader cooldown when not on a journey
+    if (this.task === 'trader' && this.traderState === null && this._traderCooldown > 0) {
+      this._traderCooldown -= delta;
     }
 
     // ── Move toward target ────────────────────────────────────────────
@@ -432,6 +461,12 @@ export class Agent {
         this.z = newZ;
         this.facingX = dx / dist;
         this.facingZ = dz / dist;
+        // CAD-177: Record trade traffic as trader moves
+        if (this.state === AgentState.TRADING) {
+          if (!world._tradeTraffic) world._tradeTraffic = {};
+          const tk = `${Math.floor(newX)}_${Math.floor(newZ)}`;
+          world._tradeTraffic[tk] = (world._tradeTraffic[tk] || 0) + (delta * 0.5);
+        }
       } else {
         // Blocked — pick a new reachable target
         this._pickWanderTarget(world);
@@ -519,6 +554,12 @@ export class Agent {
       this._pickUpGroundItems(world, itemDefs);
     }
 
+    // CAD-178: Trader arrival logic
+    if (this.state === AgentState.TRADING) {
+      this._onTraderArrival(world, allAgents);
+      return;
+    }
+
     this._decideAction(world, allAgents, conceptGraph, this._timeSystem);
   }
 
@@ -527,6 +568,14 @@ export class Agent {
     const gatherThreshold = taskDef?.gatherThreshold ?? 0.25;
     const restThreshold   = taskDef?.restThreshold   ?? 0.2;
     const envMult = this._lastWeatherMult ?? 1.0;
+
+    // CAD-178: Traders with trade concept attempt inter-settlement journeys
+    if (this.task === 'trader' && this.knowledge.has('trade') && this.traderState === null) {
+      if (this._traderCooldown <= 0 && world._settlementSystem) {
+        if (this._startTraderJourney(world, world._settlementSystem)) return;
+      }
+      if (this._traderCooldown > 0) this._traderCooldown -= 0; // will tick in tick()
+    }
 
     // Low health — use medicine from inventory if available
     if (this.health < 0.40 && this._itemDefs) {
@@ -672,6 +721,146 @@ export class Agent {
 
     this.state = AgentState.WANDERING;
     this._pickWanderTarget(world, allAgents);
+  }
+
+  // ── CAD-178: Trader journey helpers ──────────────────────────────────
+
+  /**
+   * Called when a trading agent arrives at its target tile.
+   * Handles both outbound arrival (exchange resources) and return home.
+   */
+  _onTraderArrival(world, allAgents) {
+    if (this.traderState === 'outbound') {
+      // Arrived at target settlement — exchange resources via settlement resources map
+      const targetS = world._settlementSystem
+        ? world._settlementSystem.settlements.find(s => s.id === this.traderTargetSettlementId)
+        : null;
+      const homeS = world._settlementSystem
+        ? world._settlementSystem.settlements.find(s => s.id === this.traderHomeSettlementId)
+        : null;
+
+      if (targetS && homeS && targetS.resources && homeS.resources) {
+        // Give cargo items to target settlement
+        for (const { resource, qty } of this.traderCargo) {
+          targetS.resources[resource] = (targetS.resources[resource] || 0) + qty;
+          homeS.resources[resource] = Math.max(0, (homeS.resources[resource] || 0) - qty);
+        }
+        // Load return cargo from target's surplus
+        this.traderCargo = [];
+        const resources = ['wood', 'food', 'stone'];
+        for (const res of resources) {
+          const targetHas = targetS.resources[res] || 0;
+          const homeHas = homeS.resources[res] || 0;
+          if (targetHas > 20 && homeHas < targetHas * 0.5) {
+            const take = Math.min(Math.floor(targetHas * 0.2), 10);
+            this.traderCargo.push({ resource: res, qty: take });
+            targetS.resources[res] = Math.max(0, targetHas - take);
+            break;
+          }
+        }
+
+        // Log contact event for CAD-179
+        if (!world._contactEvents) world._contactEvents = [];
+        world._contactEvents.push({
+          fromId: this.traderHomeSettlementId,
+          toId: this.traderTargetSettlementId,
+          day: world.day,
+          agentId: this.id,
+        });
+      }
+
+      // Head home
+      this.traderState = 'returning';
+      const home = world._settlementSystem
+        ? world._settlementSystem.settlements.find(s => s.id === this.traderHomeSettlementId)
+        : null;
+      if (home) {
+        this.targetX = home.x + 0.5;
+        this.targetZ = home.z + 0.5;
+      } else {
+        this._finishTraderJourney();
+      }
+    } else if (this.traderState === 'returning') {
+      // Arrived back home
+      const homeS = world._settlementSystem
+        ? world._settlementSystem.settlements.find(s => s.id === this.traderHomeSettlementId)
+        : null;
+      if (homeS && homeS.resources) {
+        for (const { resource, qty } of this.traderCargo) {
+          homeS.resources[resource] = (homeS.resources[resource] || 0) + qty;
+        }
+      }
+      this._finishTraderJourney();
+    }
+  }
+
+  _finishTraderJourney() {
+    this.traderState = null;
+    this.traderCargo = [];
+    this.state = AgentState.WANDERING;
+    this._traderCooldown = 90 + Math.random() * 90;
+  }
+
+  /**
+   * Attempt to start a trader journey to a different settlement.
+   * @param {object} world
+   * @param {object} settlementSystem
+   */
+  _startTraderJourney(world, settlementSystem) {
+    if (!this.knowledge.has('trade')) return false;
+    if (this._traderCooldown > 0) return false;
+    if (this.needs.hunger < 0.4 || this.needs.energy < 0.3) return false;
+    if (!settlementSystem || settlementSystem.settlements.length < 2) return false;
+
+    const homeS = settlementSystem.getSettlementFor(this);
+    if (!homeS) return false;
+
+    // Ensure home has resources
+    if (!homeS.resources) homeS.resources = { wood: 10, food: 10, stone: 10 };
+
+    // Pick target settlement — not home, closest
+    const others = settlementSystem.settlements.filter(s => s.id !== homeS.id);
+    if (others.length === 0) return false;
+
+    // Prefer closest settlement
+    const target = others.reduce((best, s) => {
+      const d = Math.hypot(s.x - homeS.x, s.z - homeS.z);
+      return d < best.d ? { s, d } : best;
+    }, { s: others[0], d: Infinity }).s;
+
+    if (!target.resources) target.resources = { wood: 10, food: 10, stone: 10 };
+
+    // Load cargo: take surplus from home to offer at target
+    this.traderCargo = [];
+    const resources = ['wood', 'food', 'stone'];
+    for (const res of resources) {
+      const homeHas = homeS.resources[res] || 0;
+      const targetHas = target.resources[res] || 0;
+      if (homeHas > 15 && homeHas > targetHas * 1.5) {
+        const carry = Math.min(Math.floor(homeHas * 0.2), 8);
+        this.traderCargo.push({ resource: res, qty: carry });
+        break;
+      }
+    }
+    if (this.traderCargo.length === 0) {
+      // Carry a small gift regardless
+      const res = resources[Math.floor(Math.random() * resources.length)];
+      this.traderCargo.push({ resource: res, qty: 3 });
+    }
+
+    this.traderState = 'outbound';
+    this.traderHomeSettlementId = homeS.id;
+    this.traderTargetSettlementId = target.id;
+    this.state = AgentState.TRADING;
+    this.targetX = target.x + 0.5;
+    this.targetZ = target.z + 0.5;
+
+    // Record trade traffic for CAD-177
+    if (world._tradeTraffic === undefined) world._tradeTraffic = {};
+    const key = `${Math.floor(this.x)}_${Math.floor(this.z)}`;
+    world._tradeTraffic[key] = (world._tradeTraffic[key] || 0) + 1;
+
+    return true;
   }
 
   // ── Target selection ──────────────────────────────────────────────────
