@@ -54,6 +54,9 @@
     }
     .copy-btn:hover { background: #3a5570; }
     .copy-btn.copied { background: #1a3a20; border-color: #4caf50; color: #6fcf7a; }
+    .screenshot { margin: 1.2rem 0 1.8rem; }
+    .screenshot img { width: 100%; border-radius: 8px; border: 1px solid #2e4560; display: block; }
+    .screenshot figcaption { font-size: 0.82rem; color: #8aa6c0; margin-top: 0.5rem; text-align: center; font-style: italic; }
   </style>
 </head>
 <body>
@@ -74,6 +77,11 @@
     The game ends when the last agent dies. Success is measured by how far your civilisation advanced —
     which concepts were discovered, how large the population grew, and how long it survived.
   </p>
+
+  <figure class="screenshot">
+    <img src="screenshots/readme-hero.png" alt="World — overview of a procedurally generated world with ocean, forest, grassland and desert biomes">
+    <figcaption>A typical world — procedurally generated with distinct biomes, a minimap, and the HUD bar at top.</figcaption>
+  </figure>
 
   <h2>Running the Game</h2>
   <ol>
@@ -129,6 +137,11 @@
     <li><strong>Task</strong> — role assigned after Organisation is discovered</li>
     <li><strong>Knowledge tags</strong> — all concepts this agent knows</li>
   </ul>
+
+  <figure class="screenshot">
+    <img src="screenshots/readme-inspector.png" alt="The Agent Inspector panel showing an agent's name, state, hunger, energy, age, curiosity, task and known concepts">
+    <figcaption>The Agent Inspector — click any agent to open their panel and auto-follow them across the world.</figcaption>
+  </figure>
 
   <h3>Click a Tile</h3>
   <p>Click an empty tile to open the <strong>Tile Info Panel</strong>:</p>
@@ -206,6 +219,11 @@
       <tr><td>Discovering</td><td>Orange glow</td><td>Just made a discovery. Brief pause then returns to Wandering. An orange flash appears at their location.</td></tr>
     </tbody>
   </table>
+
+  <figure class="screenshot">
+    <img src="screenshots/readme-agents.png" alt="Agents with coloured state icons above them — green for gathering, blue for sleeping">
+    <figcaption>Agents with state icons — click any agent to open their inspector and auto-follow them. Green = gathering, blue = sleeping, yellow = socialising, red = danger.</figcaption>
+  </figure>
 
   <h3>Life &amp; Death</h3>
   <ul>
@@ -401,6 +419,11 @@
   </table>
 
   <div class="tip"><strong>Secret creatures:</strong> The hummingbird and whale each appear exactly once per world. The hummingbird flies between grass and forest; the whale swims in deep water. Can you spot them?</div>
+
+  <figure class="screenshot">
+    <img src="screenshots/readme-settled.png" alt="A more developed world with settlements forming and agents distributed across biomes">
+    <figcaption>A world in mid-development — agents have spread across biomes and settlements are beginning to form.</figcaption>
+  </figure>
 
   <h2>Known Limitations &amp; Future Plans</h2>
   <ul>
