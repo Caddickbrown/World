@@ -60,7 +60,7 @@ function snapshotTileTypes() {
   const snap = [];
   for (let z = 0; z < world.height; z++) {
     for (let x = 0; x < world.width; x++) {
-      snap.push(world.tiles[z][x].type);
+      snap.push(world.tiles[z]?.[x]?.type ?? 'GRASS');
     }
   }
   return snap;
@@ -167,8 +167,9 @@ function runTick(realDelta, inputs) {
 
   if (delta > 0) {
     // Weather
-    const prevWeather = weather.current;
-    weather.update(delta, time.season);
+    let prevWeather;
+    try { prevWeather = weather.current;
+    weather.update(delta, time.season); } catch(e) { throw new Error('[weather] ' + e.message); }
     if (weather.current !== prevWeather) {
       if (weather.current === 'STORM')
         pendingEvents.push({ type: 'weather', message: 'A storm rolls in...', x: 0, z: 0 });
@@ -207,17 +208,17 @@ function runTick(realDelta, inputs) {
     if (world.tileItems && itemDefs.size > 0) {
       world.tileItems.tickSpoilage(delta, itemDefs, disasterSystem.getSpoilageMult());
     }
-    ecologySystem.tick(time.day, world, weather);
-    world.updateCutTrees(delta);
-    world.updateChickenNests(delta);
-    world.updateCows(delta);
-    world.updateGlaciers(delta, weather.temperature ?? 20);
+    try { ecologySystem.tick(time.day, world, weather); } catch(e) { throw new Error('[ecology] ' + e.message); }
+    try { world.updateCutTrees(delta); } catch(e) { throw new Error('[cutTrees] ' + e.message); }
+    try { world.updateChickenNests(delta); } catch(e) { throw new Error('[chickenNests] ' + e.message); }
+    try { world.updateCows(delta); } catch(e) { throw new Error('[cows] ' + e.message); }
+    try { world.updateGlaciers(delta, weather.temperature ?? 20); } catch(e) { throw new Error('[glaciers] ' + e.message); }
     // Note: domestication uses building positions from renderer — skip in worker
     // (buildings are renderer-side; agent knowledge-gated effects still apply)
 
     // Wild horses + predators
-    for (const horse of horses) horse.tick(delta, world, horses);
-    for (const pred of predators) pred.tick(delta, agents, world, []);
+    try { for (const horse of horses) horse.tick(delta, world, horses); } catch(e) { throw new Error('[horses] ' + e.message); }
+    try { for (const pred of predators) pred.tick(delta, agents, world, []); } catch(e) { throw new Error('[predators] ' + e.message); }
 
     // Campfire events
     if (world.campfireEvents?.length) {
@@ -357,7 +358,7 @@ function runTick(realDelta, inputs) {
     ConflictSystem.updateCooldowns(agents, delta);
 
     // SettlementSystem
-    settlementSystem.tick(delta, agents, world, time.day);
+    try { settlementSystem.tick(delta, agents, world, time.day); } catch(e) { throw new Error('[settlement] ' + e.message); }
     settlementSystem.updateMembership(agents);
     for (const s of settlementSystem.settlements) {
       settlementSystem.nameSettlement(s, agents);
@@ -393,8 +394,11 @@ function runTick(realDelta, inputs) {
   }
 
   // Diff tiles
-  const newSnap = snapshotTileTypes();
-  const tileChanges = diffTiles(_prevTileSnapshot, newSnap);
+  let newSnap, tileChanges;
+  try {
+    newSnap = snapshotTileTypes();
+    tileChanges = diffTiles(_prevTileSnapshot, newSnap);
+  } catch(e) { throw new Error('[diffTiles] ' + e.message); }
   _prevTileSnapshot = newSnap;
 
   // Flush events
@@ -403,7 +407,7 @@ function runTick(realDelta, inputs) {
   self.postMessage({
     type: 'STATE',
     agents: buildAgentState(),
-    tileChanges,
+    tileChanges: tileChanges ?? [],
     events,
     worldStats: buildWorldStats(),
     fullTileSync: false,
