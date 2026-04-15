@@ -17,6 +17,8 @@ export const TileType = {
   MOUNTAIN: 'MOUNTAIN',
   GLACIER:  'GLACIER',
   LAVA:     'LAVA',
+  /** CAD-193: degraded grassland from overgrazing */
+  DIRT:     'DIRT',
 };
 
 export class World {

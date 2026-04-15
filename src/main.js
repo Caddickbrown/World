@@ -1144,8 +1144,10 @@ async function init() {
         world.tileItems.tickSpoilage(delta, itemDefs, disasterSystem.getSpoilageMult());
       }
 
-      // Tick EcologySystem (forest spread, seed dispersal, soil/moisture)
-      ecologySystem.tick(time.day, world, weather);
+      // Tick EcologySystem (forest spread, seed dispersal, soil/moisture, overgrazing)
+      ecologySystem.tick(time.day, world, weather,
+        sheepRenderer ? sheepRenderer.sheep : [],
+        horseRenderer ? horseRenderer.entries : []);
 
       // Tick world ecology systems
       world.updateCutTrees(delta);

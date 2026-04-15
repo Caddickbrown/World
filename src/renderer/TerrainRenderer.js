@@ -14,6 +14,7 @@ const TILE_HEIGHT = {
   [TileType.MOUNTAIN]: 1.50,
   [TileType.GLACIER]:  0.64,
   [TileType.LAVA]:     0.08,
+  [TileType.DIRT]:     0.12, // CAD-193: degraded grassland
 };
 
 // Base colours per tile type (HSL for easy variation)
@@ -29,6 +30,7 @@ const TILE_COLOR_HSL = {
   [TileType.MOUNTAIN]: [215, 18, 68],
   [TileType.GLACIER]:  [200, 45, 88],
   [TileType.LAVA]:     [ 18, 95, 42],
+  [TileType.DIRT]:     [ 28, 40, 38], // CAD-193: muddy brown
 };
 
 const GAP = 0.0; // gap between tiles
@@ -76,6 +78,7 @@ export class TerrainRenderer {
       [TileType.MOUNTAIN]: [],
       [TileType.GLACIER]:  [],
       [TileType.LAVA]:     [],
+      [TileType.DIRT]:     [], // CAD-193: overgrazing degradation
     };
 
     for (let z = 0; z < this.world.height; z++) {
