@@ -31,6 +31,16 @@ export class PopulationManager {
     // When the map expands to 128×128, this should scale proportionally
     // (e.g. MAX_SHEEP_CAPACITY * (newSize / 32)^2 = 200 * 16 = 3200).
     this.MAX_SHEEP_CAPACITY = 200;
+
+    // CAD-194: Lotka-Volterra parameters
+    // dPrey/dt = α*prey - β*prey*predator
+    // dPred/dt = δ*prey*predator - γ*predator
+    this.LV_ALPHA = 0.1;   // prey birth rate
+    this.LV_BETA  = 0.02;  // predation rate
+    this.LV_DELTA = 0.01;  // predator birth rate from prey
+    this.LV_GAMMA = 0.05;  // predator death rate
+    this._lvTimer = 0;
+    this._lvInterval = 1;  // apply LV equations once per game-day (set from main.js or here)
   }
 
   /**
@@ -79,6 +89,81 @@ export class PopulationManager {
   }
 
   /**
+   * CAD-194: Apply Lotka-Volterra predator/prey dynamics.
+   * Call once per game-day (or at _lvInterval).
+   *
+   * @param {object} renderers - { deerRenderer, rabbitRenderer, foxRenderer, wolfRenderer }
+   *   Each renderer exposes an array: deer[], rabbit[], foxes[], wolves[]
+   * @param {number} dt - elapsed game-days since last call (usually 1)
+   */
+  tickLotkaVolterra(renderers, dt = 1) {
+    const { deerRenderer, rabbitRenderer, foxRenderer, wolfRenderer } = (renderers || {});
+
+    // Count live prey (deer + rabbits)
+    let preyCount = 0;
+    if (deerRenderer?.deer) preyCount += deerRenderer.deer.filter(d => !d.isDead).length;
+    if (rabbitRenderer?.rabbits) preyCount += rabbitRenderer.rabbits.filter(r => !r.isDead).length;
+
+    // Count live predators (foxes + wolves)
+    let predCount = 0;
+    if (foxRenderer?.foxes) predCount += foxRenderer.foxes.filter(f => !f.isDead).length;
+    if (wolfRenderer?.wolves) predCount += wolfRenderer.wolves.filter(w => !w.isDead).length;
+
+    if (preyCount === 0 && predCount === 0) return;
+
+    const α = this.LV_ALPHA, β = this.LV_BETA;
+    const δ = this.LV_DELTA, γ = this.LV_GAMMA;
+
+    const dPrey = (α * preyCount - β * preyCount * predCount) * dt;
+    const dPred = (δ * preyCount * predCount - γ * predCount) * dt;
+
+    // Carrying capacities
+    const preyCapacity = Math.max(2, (deerRenderer?.deer?.length || 0) + (rabbitRenderer?.rabbits?.length || 0) + 20);
+    const predCapacity = Math.max(1, (foxRenderer?.foxes?.length || 0) + (wolfRenderer?.wolves?.length || 0) + 10);
+
+    const newPrey = Math.max(1, Math.min(preyCapacity, Math.round(preyCount + dPrey)));
+    const newPred = Math.max(1, Math.min(predCapacity, Math.round(predCount + dPred)));
+
+    const preyDelta = newPrey - preyCount;
+    const predDelta = newPred - predCount;
+
+    // Apply births/deaths to deer and rabbits (split evenly)
+    this._applyPopDelta(deerRenderer,   'deer',    preyDelta > 0 ? Math.ceil(preyDelta / 2)  : Math.floor(preyDelta / 2));
+    this._applyPopDelta(rabbitRenderer, 'rabbits', preyDelta > 0 ? Math.floor(preyDelta / 2) : Math.ceil(preyDelta / 2));
+
+    // Apply births/deaths to foxes and wolves
+    this._applyPopDelta(foxRenderer,  'foxes',  predDelta > 0 ? Math.ceil(predDelta / 2)  : Math.floor(predDelta / 2));
+    this._applyPopDelta(wolfRenderer, 'wolves', predDelta > 0 ? Math.floor(predDelta / 2) : Math.ceil(predDelta / 2));
+  }
+
+  /**
+   * Apply a population delta to a renderer's animal array.
+   * Positive delta = spawn animals; negative delta = mark animals as dead.
+   */
+  _applyPopDelta(renderer, arrayKey, delta) {
+    if (!renderer || !renderer[arrayKey]) return;
+    const animals = renderer[arrayKey];
+    const live = animals.filter(a => !a.isDead);
+
+    if (delta > 0) {
+      // Births — use renderer.addAnimal if available, else skip
+      for (let i = 0; i < delta; i++) {
+        const tile = this._randomGrassTile();
+        if (tile && typeof renderer.addAnimal === 'function') {
+          renderer.addAnimal(tile.x, tile.z);
+        }
+      }
+    } else if (delta < 0) {
+      // Deaths — mark random live animals dead
+      const toKill = Math.min(Math.abs(delta), live.length - 1); // keep at least 1 alive
+      const shuffled = [...live].sort(() => Math.random() - 0.5);
+      for (let i = 0; i < toKill; i++) {
+        if (shuffled[i]) shuffled[i].isDead = true;
+      }
+    }
+  }
+
+  /**
    * Main update — call once per game-loop frame.
    *
    * @param {number} delta - game-seconds elapsed this frame
@@ -86,11 +171,20 @@ export class PopulationManager {
    * @param {WildHorseRenderer} horseRenderer
    * @param {Predator[]} predators  - passed for potential future predator tracking
    * @param {World} world
+   * @param {object} [lvRenderers] - optional { deerRenderer, rabbitRenderer, foxRenderer, wolfRenderer }
    */
-  tick(delta, sheepRenderer, horseRenderer, predators, world) {
+  tick(delta, sheepRenderer, horseRenderer, predators, world, lvRenderers = null) {
     this._tickTimer += delta;
     if (this._tickTimer < this._tickInterval) return;
     this._tickTimer = 0;
+
+    // CAD-194: Lotka-Volterra — run once per game-day (approximated by _lvInterval)
+    this._lvTimer += this._tickInterval;
+    if (lvRenderers && this._lvTimer >= this._lvInterval) {
+      const gameDaysElapsed = this._lvTimer / this._lvInterval;
+      this._lvTimer = 0;
+      this.tickLotkaVolterra(lvRenderers, gameDaysElapsed);
+    }
 
     const grassCount = this._countGrassTiles();
     // CAD-213: Use getCarryingCapacity() so the 200-cap and size-scaling logic
