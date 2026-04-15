@@ -475,6 +475,10 @@ export class Agent {
             world.tileItems.add(tile.x, tile.z, itemId, overflow);
           }
         }
+        // CAD-187: Remember this food source location after successful gathering
+        if (gathered.length > 0) {
+          this._rememberFoodSource(tile.x, tile.z, tile.type, world.day || 0);
+        }
         // Bridge behavior: if hungry, eat immediately after gathering
         if (this.needs.hunger < 0.6) {
           this._tryEat(itemDefs);
