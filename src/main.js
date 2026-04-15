@@ -149,6 +149,8 @@ async function init() {
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
+  // CAD-176: War cooldown map — persisted between ticks
+  const _warCooldowns = new Map();
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -1314,6 +1316,20 @@ async function init() {
           settlementSystem.recordContact(evt.fromId, evt.toId, evt.day, agents, historyLog);
         }
         world._contactEvents = [];
+      }
+
+      // ── CAD-176: Settlement war checks (throttled — once per 5 game-seconds) ──
+      if (!world._warCheckTimer) world._warCheckTimer = 0;
+      world._warCheckTimer += delta;
+      if (world._warCheckTimer >= 5 && settlementSystem.settlements.length >= 2) {
+        world._warCheckTimer = 0;
+        const wars = ConflictSystem.checkSettlementWars(
+          settlementSystem.settlements, agents, time.day, _warCooldowns
+        );
+        for (const war of wars) {
+          ConflictSystem.resolveWar(war, agents, historyLog, time.day, settlementSystem);
+          showNotification(`⚔️ War! ${war.winner.name || 'Camp'} defeated ${war.loser.name || 'Camp'}`, 'social');
+        }
       }
 
       // ── Achievements tick ───────────────────────────────────────────────
