@@ -101,6 +101,7 @@ async function init() {
   let flowerRenderer;
   let rabbitRenderer;
   let eagleRenderer;
+  let pigRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -251,6 +252,7 @@ async function init() {
     flowerRenderer?.dispose();
     rabbitRenderer?.dispose();
     eagleRenderer?.dispose();
+    pigRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
@@ -268,6 +270,7 @@ async function init() {
     world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
     horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
     sheepRenderer     = new SheepRenderer(wr.scene, world);
+    pigRenderer       = new PigRenderer(wr.scene, world);
     highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
     butterflyRenderer = new ButterflyRenderer(wr.scene, world);
     beeRenderer       = new BeeRenderer(wr.scene, world);
@@ -324,10 +327,13 @@ async function init() {
         buildingRenderer.dispose();
         horseRenderer?.dispose();
         sheepRenderer?.dispose();
+        pigRenderer?.dispose();
         highlandCowRenderer?.dispose();
         butterflyRenderer?.dispose();
         beeRenderer?.dispose();
         flowerRenderer?.dispose();
+        rabbitRenderer?.dispose();
+        eagleRenderer?.dispose();
 
         world = new World(val);
         world.naturalFires = new Map();
@@ -345,6 +351,7 @@ async function init() {
         world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
         horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
         sheepRenderer     = new SheepRenderer(wr.scene, world);
+        pigRenderer       = new PigRenderer(wr.scene, world);
         highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
@@ -405,10 +412,13 @@ async function init() {
         buildingRenderer.dispose();
         horseRenderer?.dispose();
         sheepRenderer?.dispose();
+        pigRenderer?.dispose();
         highlandCowRenderer?.dispose();
         butterflyRenderer?.dispose();
         beeRenderer?.dispose();
         flowerRenderer?.dispose();
+        rabbitRenderer?.dispose();
+        eagleRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
@@ -436,6 +446,7 @@ async function init() {
         world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
         horseRenderer     = new WildHorseRenderer(wr.scene, horses, world);
         sheepRenderer     = new SheepRenderer(wr.scene, world);
+        pigRenderer       = new PigRenderer(wr.scene, world);
         highlandCowRenderer = new HighlandCowRenderer(wr.scene, world);
         butterflyRenderer = new ButterflyRenderer(wr.scene, world);
         beeRenderer       = new BeeRenderer(wr.scene, world);
@@ -1320,6 +1331,7 @@ async function init() {
     horseRenderer?.update();
     sheepRenderer?.update(delta > 0 ? delta : 0, predators);
     highlandCowRenderer?.update(delta > 0 ? delta : 0);
+    pigRenderer?.update(delta > 0 ? delta : 0);
     const isSunny = !weather.isRaining && !weather.isStorm;
     butterflyRenderer?.update(delta > 0 ? delta : 0, isSunny);
     beeRenderer?.update(delta > 0 ? delta : 0, isSunny);
