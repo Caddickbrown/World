@@ -10,6 +10,19 @@ const STATE_COLOR = {
   [AgentState.SLEEPING]:    new THREE.Color(0x4c6ef5),
   [AgentState.SOCIALIZING]: new THREE.Color(0xa78bfa),
   [AgentState.DISCOVERING]: new THREE.Color(0xfb923c),
+  [AgentState.FISHING]:     new THREE.Color(0x22bbcc),
+  [AgentState.PERFORMING]:  new THREE.Color(0xff66aa),
+};
+
+// State icon colours for the small billboard indicator above agents
+const STATE_ICON_COLOR = {
+  [AgentState.WANDERING]:   0x888888,
+  [AgentState.GATHERING]:   0x44aa44,
+  [AgentState.SLEEPING]:    0x2244aa,
+  [AgentState.SOCIALIZING]: 0xffcc00,
+  [AgentState.DISCOVERING]: 0xff8800,
+  [AgentState.FISHING]:     0x00cccc,
+  [AgentState.PERFORMING]:  0x00cccc,
 };
 
 const DEAD_COLOR = new THREE.Color(0x2a2a2a);
@@ -61,6 +74,9 @@ export class AgentRenderer {
     this._ring.rotation.x = -Math.PI / 2;
     this._ring.visible = false;
     this.scene.add(this._ring);
+
+    // State indicator: small flat square billboard above the agent's head
+    this._indicatorGeom = new THREE.PlaneGeometry(0.18, 0.18);
 
     // Speech bubble shared geometry/material
     this._speechGeom = new THREE.PlaneGeometry(0.35, 0.18);
@@ -177,12 +193,23 @@ export class AgentRenderer {
     speech.position.set(0.15, 0.72, 0);
     speech.visible = false;
 
+    // State indicator: small coloured square above the head, always faces camera
+    const indicatorMat = new THREE.MeshBasicMaterial({
+      color: STATE_ICON_COLOR[agent.state] ?? STATE_ICON_COLOR[AgentState.WANDERING],
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const indicator = new THREE.Mesh(this._indicatorGeom, indicatorMat);
+    indicator.position.set(0, 0.75, 0);
+
     const group = new THREE.Group();
-    group.add(body, head, eyeL, eyeR, boatGroup, speech);
+    group.add(body, head, eyeL, eyeR, boatGroup, speech, indicator);
     group.userData.agentId = agent.id;
 
     this.scene.add(group);
-    this.meshes.push({ group, body, bodyMat, headMat, boatGroup, speech, agent });
+    this.meshes.push({ group, body, bodyMat, headMat, indicatorMat, boatGroup, speech, indicator, agent });
   }
 
   /** Call this when a new agent is born at runtime */
@@ -192,10 +219,11 @@ export class AgentRenderer {
 
   /** Remove all agent meshes and free GPU memory */
   dispose() {
-    for (const { group, bodyMat, headMat } of this.meshes) {
+    for (const { group, bodyMat, headMat, indicatorMat } of this.meshes) {
       this.scene.remove(group);
       bodyMat.dispose();
       headMat.dispose();
+      if (indicatorMat) indicatorMat.dispose();
     }
     this._bodyGeom.dispose();
     this._headGeom.dispose();
@@ -220,6 +248,7 @@ export class AgentRenderer {
     this._speechGeom.dispose();
     this._speechMat.dispose();
     this._speechTex.dispose();
+    this._indicatorGeom.dispose();
     this.meshes = [];
   }
 
@@ -241,7 +270,7 @@ export class AgentRenderer {
       }
     }
 
-    for (const { group, bodyMat, boatGroup, speech, agent } of this.meshes) {
+    for (const { group, bodyMat, indicatorMat, boatGroup, speech, indicator, agent } of this.meshes) {
       if (agent.health <= 0) {
         bodyMat.color.copy(DEAD_COLOR);
         bodyMat.emissive.set(0x000000);
@@ -273,6 +302,13 @@ export class AgentRenderer {
       } else {
         bodyMat.color.copy(STATE_COLOR[agent.state] ?? STATE_COLOR[AgentState.WANDERING]);
         bodyMat.emissive.setHex(agent.selected ? 0x222244 : 0x000000);
+      }
+
+      // State indicator: update colour based on current state and billboard to face camera
+      if (indicator && indicatorMat) {
+        indicatorMat.color.setHex(STATE_ICON_COLOR[agent.state] ?? STATE_ICON_COLOR[AgentState.WANDERING]);
+        // Billboard: counteract the group's Y rotation so it always faces forward
+        indicator.rotation.y = -group.rotation.y;
       }
 
       // Speech bubble: only agents who know 'language' can show speech bubbles
