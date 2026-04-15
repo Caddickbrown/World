@@ -67,13 +67,13 @@ function snapshotTileTypes() {
 }
 
 function diffTiles(prev, next) {
+  // Both prev and next are flat 1D arrays of tile type strings from snapshotTileTypes()
   const changes = [];
   let i = 0;
   for (let z = 0; z < world.height; z++) {
     for (let x = 0; x < world.width; x++) {
-      const t = next[z][x];
-      if (prev[i] !== t.type) {
-        changes.push({ x, z, type: t.type });
+      if (prev[i] !== next[i]) {
+        changes.push({ x, z, type: next[i] });
       }
       i++;
     }
