@@ -349,6 +349,49 @@ export class AgentRenderer {
     }
   }
 
+  /**
+   * Update renderer-side agent proxy objects from a lightweight worker state array.
+   * The worker sends serialisable snapshots; we apply them to the live agent objects
+   * so the rest of the renderer code (update(), hitTest(), etc.) works unchanged.
+   *
+   * @param {Array<{id, x, z, state, energy, hunger, health, age, role, task, isDead,
+   *   facingX, facingZ, discoveryFlash, speechBubble, lifeStage, knowledge, faction,
+   *   name, selected}>} workerAgents
+   */
+  updateFromWorkerState(workerAgents) {
+    for (const ws of workerAgents) {
+      const entry = this.meshes.find(m => m.agent.id === ws.id);
+      if (!entry) continue;
+      const a = entry.agent;
+      a.x = ws.x;
+      a.z = ws.z;
+      a.state = ws.state;
+      a.needs = a.needs ?? {};
+      a.needs.energy = ws.energy;
+      a.needs.hunger = ws.hunger;
+      a.health = ws.health;
+      a.age = ws.age;
+      a.role = ws.role;
+      a.task = ws.task;
+      a.isDead = ws.isDead;
+      a.facingX = ws.facingX;
+      a.facingZ = ws.facingZ;
+      a.discoveryFlash = ws.discoveryFlash;
+      a.speechBubble = ws.speechBubble;
+      a.lifeStage = ws.lifeStage;
+      a.faction = ws.faction;
+      a.name = ws.name;
+      // Restore knowledge as Set (worker sends plain array)
+      if (ws.knowledge) {
+        if (!(a.knowledge instanceof Set)) a.knowledge = new Set();
+        a.knowledge.clear();
+        for (const k of ws.knowledge) a.knowledge.add(k);
+      }
+      // Preserve selected flag — controlled by main thread click handler
+      // (do not overwrite with worker value to avoid deselection race)
+    }
+  }
+
   /** Returns the agent whose mesh was hit by a raycast, or null */
   hitTest(raycaster) {
     const allMeshes = this.meshes.map(m => m.group.children[0]);

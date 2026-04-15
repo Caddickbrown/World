@@ -206,6 +206,8 @@ async function init() {
     btn.addEventListener('click', () => {
       const speed = Number(btn.dataset.speed);
       time.setSpeed(speed);
+      // Mirror speed change to simulation worker
+      simWorker.postMessage({ type: 'SET_SPEED', speed });
       document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     });
@@ -313,13 +315,21 @@ async function init() {
     lightningCooldown = 0;
     conceptGraph = new ConceptGraph(conceptsData);
     agents.length = 0;
-    const startPop = Number(popSlider.value);
-    world.getSpawnPoints(startPop).forEach(p => agents.push(new Agent(p.x, p.z)));
-    agents.forEach(a => ConflictSystem.assignFaction(a));
+    // Proxy agents repopulated from worker INIT_COMPLETE message
 
     terrainRenderer = new TerrainRenderer(wr.scene, world);
-    terrainRenderer.buildInitial(wr.camera);
+    // Don't call buildInitial here — wait for INIT_COMPLETE from worker
     ar = new AgentRenderer(wr.scene, agents, world);
+
+    // ── Send RESET to simulation worker ────────────────────────────────
+    workerReady = false;
+    const startPop = Number(popSlider.value);
+    simWorker.postMessage({
+      type: 'RESET',
+      seed: world.seed,
+      agentCount: startPop,
+      conceptsData,
+    });
     buildingRenderer = new BuildingRenderer(wr.scene, world);
     horses.length = 0;
     world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).forEach(p => horses.push(new WildHorse(p.x, p.z)));
@@ -732,6 +742,8 @@ async function init() {
         // Revert to last valid position (targetX/Z before drag started)
         dragAgent.x = dragAgent.targetX; dragAgent.z = dragAgent.targetZ;
       }
+      // Notify worker of agent teleport so simulation state stays in sync
+      simWorker.postMessage({ type: 'AGENT_DRAG', agentId: dragAgent.id, x: dragAgent.x, z: dragAgent.z });
       wr.controls.enabled = true;
       mouseDownAt = null; dragAgent = null; isDragging = false;
       return;
@@ -1144,130 +1156,36 @@ async function init() {
     const realDelta = lastTimestamp === null ? 0 : (timestamp - lastTimestamp) / 1000;
     lastTimestamp = timestamp;
 
-    const delta = time.update(realDelta);
+    // ── Send TICK to simulation worker ────────────────────────────────────
+    // The worker handles all simulation updates; main thread only renders + handles input.
+    const realDeltaCapped = Math.min(realDelta, 0.1);
+    if (workerReady && realDeltaCapped > 0) {
+      simWorker.postMessage({ type: 'TICK', delta: realDeltaCapped, inputs: pendingInputs.splice(0) });
+    }
 
-    // CAD-122: track total game time for tide
+    // Derive delta for renderer animations from time proxy (updated by worker STATE messages)
+    const delta = time.paused ? 0 : Math.min(realDelta, 0.1) * time.speed;
+
+    // CAD-122: tide total time (proxy — worker keeps authoritative value, we mirror it)
     if (!weather._totalTime) weather._totalTime = 0;
-    if (delta > 0) weather._totalTime += delta;
 
-    if (delta > 0) {
-      // Update weather simulation — notify on significant changes
-      const prevWeather = weather.current;
-      weather.update(delta, time.season);
-      if (weather.current !== prevWeather) {
-        if (weather.current === 'STORM')  showNotification('A storm rolls in...', 'env');
-        if (weather.current === 'RAIN')   showNotification('Rain begins to fall.', 'env');
-        if (weather.current === 'CLEAR' && (prevWeather === 'STORM' || prevWeather === 'RAIN')) {
-          showNotification('The skies clear.', 'env');
-          showNotification('🌈 A rainbow arcs across the sky!', 'env'); // CAD-121
-        }
-        audio.playEvent('weather_change');
-      }
-
-      // Lightning strikes during storms — can set forest on fire
-      if (weather.current === 'STORM') {
-        lightningCooldown -= delta;
-        if (lightningCooldown <= 0) {
-          lightningCooldown = 35 + Math.random() * 25;
-          const forestTiles = world.getTilesOfType(TileType.FOREST);
-          if (forestTiles.length > 0) {
-            const tile = forestTiles[Math.floor(Math.random() * forestTiles.length)];
-            const key = `${tile.x},${tile.z}`;
-            world.naturalFires.set(key, { endTime: time.gameTime + 28 + Math.random() * 18 });
-            wr.addFireLight(tile.x, tile.z);
-            wr.addFlash(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.z * TILE_SIZE + TILE_SIZE / 2, 0xffcc44);
-            showNotification('Lightning strikes the forest!', 'env');
-            audio.playEvent('fire');
+    // ── Fire light boost at night (renderer-side effect only) ─────────────
+    {
+      const isNight = time.timeOfDay > 0.75 || time.timeOfDay < 0.25;
+      if (isNight && world.naturalFires.size > 0) {
+        if (wr._fireLights?.size) {
+          for (const { light } of wr._fireLights.values()) {
+            light.intensity = Math.max(light.intensity, 2.8);
           }
         }
-      }
-      // Prune expired natural fires
-      for (const [key, data] of [...world.naturalFires.entries()]) {
-        if (time.gameTime >= data.endTime) {
-          world.naturalFires.delete(key);
-          const [tx, tz] = key.split(',').map(Number);
-          wr.removeFireLight(tx, tz);
+        if (wr._hemi) {
+          wr._hemi.intensity = Math.max(wr._hemi.intensity, 0.45);
         }
       }
+    }
 
-      // Regenerate tile food resources (season-aware)
-      world.updateResources(delta, time.season, itemDefs.size > 0 ? itemDefs : null);
-
-      // Tick ground-item spoilage — multiplied by disaster blight if active (CAD-332)
-      if (world.tileItems && itemDefs.size > 0) {
-        world.tileItems.tickSpoilage(delta, itemDefs, disasterSystem.getSpoilageMult());
-      }
-
-      // Tick EcologySystem (forest spread, seed dispersal, soil/moisture, overgrazing)
-      ecologySystem.tick(time.day, world, weather,
-        sheepRenderer ? sheepRenderer.sheep : [],
-        horseRenderer ? horseRenderer.entries : []);
-
-      // Tick world ecology systems
-      world.updateCutTrees(delta);
-      world.updateChickenNests(delta);
-      world.updateCows(delta);
-      world.updateGlaciers(delta, weather.temperature ?? 20);
-      world.updateDomestication(delta, buildingRenderer?.buildings ?? []);
-
-      // CAD-192: Tick population manager (reproduction, culling, extinction tracking)
-      populationManager.tick(delta, sheepRenderer, horseRenderer, predators, world);
-
-      // CAD-192: Agents with conservation concept attempt reintroduction of extinct species
-      if (populationManager.extinct.size > 0) {
-        for (const agent of agents) {
-          if (agent?.health > 0 && agent.knowledge.has('conservation')) {
-            for (const species of [...populationManager.extinct]) {
-              const success = populationManager.reintroduce(species);
-              if (success) {
-                showNotification(`${agent.name} reintroduces ${species} to the world!`, 'env');
-                historyLog.add('ecology', `${agent.name} reintroduced ${species} via conservation`, time.day);
-                break;
-              }
-            }
-          }
-        }
-      }
-
-      // CAD-197: Tick fish shoals (boids movement + replenishment)
-      for (const shoal of fishShoals) shoal.tick(delta, world);
-
-      // CAD-197: Agents with fishing concept catch fish from nearby shoals
-      for (const agent of agents) {
-        if (agent?.health > 0 && agent.knowledge.has('fishing') && agent.state === 'fishing') {
-          for (const shoal of fishShoals) {
-            if (shoal.tryFish(agent, itemDefs.size > 0 ? itemDefs : null)) break;
-          }
-        }
-      }
-
-      // Tick wild horse simulation
-      for (const horse of horses) horse.tick(delta, world, horses);
-
-      // Tick predators (food chain)
-      const sheepArr = sheepRenderer ? sheepRenderer.sheep : [];
-      for (const pred of predators) pred.tick(delta, agents, world, sheepArr);
-
-      // CAD-87: Tick animal skill system (passive growth)
-      animalSkillSystem.tick(delta);
-
-      // CAD-95: Tick frogs
-      for (const frog of frogs) frog.tick(delta, world);
-
-      // Handle agent-lit campfires
-      if (world.campfireEvents?.length) {
-        for (const evt of world.campfireEvents) {
-          const key = `${evt.tx},${evt.tz}`;
-          if (!world.naturalFires.has(key)) {
-            world.naturalFires.set(key, { endTime: time.gameTime + 40 + Math.random() * 20 });
-            wr.addFireLight(evt.tx, evt.tz);
-            showNotification(`${evt.agentName} lights a fire to keep warm.`, 'env');
-          }
-        }
-        world.campfireEvents.length = 0;
-      }
-
-      // CAD-162: heatmap sampling (once per real second)
+    // CAD-162: heatmap sampling (once per real second, uses proxy agent positions)
+    {
       const _nowSec = Math.floor(performance.now() / 1000);
       if (_nowSec !== _heatmapLastSecond) {
         _heatmapLastSecond = _nowSec;
@@ -1276,225 +1194,12 @@ async function init() {
           const hk = Math.round(agent.x) + ',' + Math.round(agent.z);
           heatmap[hk] = (heatmap[hk] ?? 0) + 1;
         }
-        // Fade all values
         for (const k of Object.keys(heatmap)) {
           heatmap[k] *= 0.999;
           if (heatmap[k] < 0.01) delete heatmap[k];
         }
       }
-
-      for (const agent of agents) {
-        if (agent?.health > 0) {
-          try {
-            const wMult = weather.energyDrainMultAt(agent.x, agent.z);
-            agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, null, time);
-          } catch (e) {
-            console.error('[World] Agent tick failed', agent?.id, e);
-          }
-        }
-      }
-
-      // Handle simulation events
-      for (const evt of conceptGraph.drainEvents()) {
-        const concept = conceptGraph.concepts.get(evt.conceptId);
-        const cName = concept ? `${concept.icon ?? ''} ${concept.name}` : evt.conceptId;
-
-        if (evt.type === 'discovery') {
-          showNotification(`${evt.agentName} discovered ${cName}!`, 'social');
-          historyLog.add('discovery', `${evt.agentName} discovered ${cName}`, time.day);
-          if (evt.conceptId === 'organisation') {
-            const agent = agents.find(a => a.id === evt.agentId);
-            if (agent) {
-              agent._adoptTask(agents);
-              const taskInfo = agent.task && Agent.TASKS[agent.task] ? Agent.TASKS[agent.task] : null;
-              if (taskInfo) showNotification(`${evt.agentName} has taken up the role of ${taskInfo.name}`, 'social');
-            }
-          }
-          // Flash + speech bubble + golden ring at agent location
-          const agent = agents.find(a => a.id === evt.agentId);
-          if (agent) {
-            const wx = agent.x * 2;
-            const wz = agent.z * 2;
-            wr.addFlash(wx, wz, 0xffd700);
-            showSpeechBubble(agent, (conceptGraph.concepts.get(evt.conceptId)?.icon ?? '') + ' ' + (conceptGraph.concepts.get(evt.conceptId)?.name ?? evt.conceptId));
-            showDiscoveryRing(agent);
-            audio.playEvent('discovery');
-          }
-        }
-        // Spread events are silent (too frequent to notify)
-      }
-
-      // Handle births
-      const hasAgriculture = agents.some(a => a.health > 0 && a.knowledge.has('agriculture'));
-      const maxPop = Number(maxPopSlider?.value ?? 100);
-      const carryingCapacity = Math.min(maxPop, Math.floor(world.getCarryingCapacity() * (hasAgriculture ? 1.25 : 1)));
-      for (const evt of conceptGraph.drainBirthEvents()) {
-        const alive = agents.filter(a => a.health > 0).length;
-        if (alive >= carryingCapacity) continue;
-
-        // Find a walkable spawn tile near the birth position
-        let bx = evt.x, bz = evt.z;
-        if (!world.isWalkable(Math.floor(bx), Math.floor(bz))) {
-          const tile = world.findNearest(Math.floor(bx), Math.floor(bz), [TileType.GRASS, TileType.FOREST], 4);
-          if (!tile) continue;
-          bx = tile.x + 0.5;
-          bz = tile.z + 0.5;
-        }
-
-        const child = new Agent(bx, bz);
-        ConflictSystem.assignFaction(child);
-
-        // Family tracking (CAD-186): wire up parent/child relationships
-        if (evt.parentAId != null) {
-          child.parents.push(evt.parentAId);
-          const parentA = agents.find(a => a.id === evt.parentAId);
-          if (parentA) parentA.children.push(child.id);
-        }
-        if (evt.parentBId != null) {
-          child.parents.push(evt.parentBId);
-          const parentB = agents.find(a => a.id === evt.parentBId);
-          if (parentB) parentB.children.push(child.id);
-        }
-
-        // CAD-189: Apply heritable traits from parents with slight mutation
-        if (evt.parentAPersonality && evt.parentBPersonality) {
-          child.personality = Agent.inheritPersonality(
-            { personality: evt.parentAPersonality },
-            { personality: evt.parentBPersonality }
-          );
-        }
-
-        agents.push(child);
-        ar.addAgent(child);
-        birthGameTimes.push(time.gameTime);
-        showNotification(`${evt.parentName} has a child — ${child.name}`, 'social');
-        historyLog.add('birth', `${evt.parentName} has a child — ${child.name}`, time.day);
-        audio.playEvent('birth');
-      }
-
-      // ── DisasterSystem tick ─────────────────────────────────────────────
-      disasterSystem.tick(delta, world, time.day, world.seed);
-      if (disasterSystem.active && disasterSystem.active._justActivated) {
-        showNotification(`Disaster: ${disasterSystem.active.type}`, 'env');
-      }
-
-      // ── ConflictSystem cooldown tick ────────────────────────────────────
-      ConflictSystem.updateCooldowns(agents, delta);
-
-      // ── SettlementSystem tick ───────────────────────────────────────────
-      settlementSystem.tick(delta, agents, world, time.day);
-      settlementSystem.updateMembership(agents);
-      // CAD-178: Expose settlementSystem on world so agents can access it
-      world._settlementSystem = settlementSystem;
-      // CAD-178/180: Tick resources and cultural drift
-      settlementSystem.tickResources(delta, time.day);
-      for (const s of settlementSystem.settlements) {
-        settlementSystem.nameSettlement(s, agents);
-      }
-      // CAD-181: Sync agent knowledge into settlement pools and teach new joiners
-      settlementSystem.syncKnowledgePools(agents);
-      // Detect newly-joined agents and give them a chance to learn settlement knowledge
-      for (const s of settlementSystem.settlements) {
-        if (!s._prevMemberIds) s._prevMemberIds = new Set(s.memberIds);
-        for (const agentId of s.memberIds) {
-          if (!s._prevMemberIds.has(agentId)) {
-            const joiner = agents.find(a => a.id === agentId);
-            if (joiner) settlementSystem.onAgentJoinsSettlement(joiner, s);
-          }
-        }
-        s._prevMemberIds = new Set(s.memberIds);
-      }
-      // CAD-179: Process contact events from trader arrivals
-      if (world._contactEvents && world._contactEvents.length > 0) {
-        for (const evt of world._contactEvents) {
-          settlementSystem.recordContact(evt.fromId, evt.toId, evt.day, agents, historyLog);
-        }
-        world._contactEvents = [];
-      }
-
-      // ── CAD-175/174: Temple + fortification construction checks (throttled) ─
-      if (!world._templeCheckTimer) world._templeCheckTimer = 0;
-      world._templeCheckTimer += delta;
-      if (world._templeCheckTimer >= 5) {
-        world._templeCheckTimer = 0;
-        // CAD-175: Temple
-        const prevTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
-        settlementSystem.checkTempleConstruction(agents);
-        const newTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
-        if (newTempleCount > prevTempleCount) {
-          terrainRenderer.updateTemples(settlementSystem.settlements);
-          historyLog.add('milestone', 'A temple was raised at a settlement', time.day);
-        }
-        // CAD-174: Fortification walls
-        const prevWallCount = settlementSystem.settlements.filter(s => s.hasWalls).length;
-        settlementSystem.checkFortificationConstruction(agents, world);
-        const newWallCount = settlementSystem.settlements.filter(s => s.hasWalls).length;
-        if (newWallCount > prevWallCount) {
-          terrainRenderer.updateWalls(settlementSystem.settlements);
-          historyLog.add('milestone', 'Walls were erected around a settlement', time.day);
-        }
-      }
-
-      // ── CAD-176: Settlement war checks (throttled — once per 5 game-seconds) ──
-      if (!world._warCheckTimer) world._warCheckTimer = 0;
-      world._warCheckTimer += delta;
-      if (world._warCheckTimer >= 5 && settlementSystem.settlements.length >= 2) {
-        world._warCheckTimer = 0;
-        const wars = ConflictSystem.checkSettlementWars(
-          settlementSystem.settlements, agents, time.day, _warCooldowns
-        );
-        for (const war of wars) {
-          ConflictSystem.resolveWar(war, agents, historyLog, time.day, settlementSystem);
-          showNotification(`⚔️ War! ${war.winner.name || 'Camp'} defeated ${war.loser.name || 'Camp'}`, 'social');
-        }
-      }
-
-      // ── Achievements tick ───────────────────────────────────────────────
-      const aliveCount = agents.filter(a => a.health > 0).length;
-      const newAchievements = achievements.tick({
-        agents,
-        conceptGraph,
-        day: time.day,
-        population: aliveCount,
-      });
-      for (const a of newAchievements) {
-        showNotification(`${a.icon} Achievement unlocked: ${a.title}`, 'social');
-        historyLog.add('discovery', `Achievement unlocked: ${a.title} — ${a.description}`, time.day);
-      }
-
-      // ── LineageTracker — record first discoveries ────────────────────────
-      for (const evt of (conceptGraph._pendingLineageEvents ?? [])) {
-        lineageTracker.record(evt.conceptId, evt.agent, time.day);
-      }
-      if (conceptGraph._pendingLineageEvents) conceptGraph._pendingLineageEvents.length = 0;
     }
-
-    // ── Fire warmth & light at night (CAD-301) ──────────────────────────
-      const isNight = time.timeOfDay > 0.75 || time.timeOfDay < 0.25;
-      if (isNight && world.naturalFires.size > 0) {
-        // Boost fire light intensity at night
-        if (wr._fireLights?.size) {
-          for (const { light } of wr._fireLights.values()) {
-            light.intensity = Math.max(light.intensity, 2.8);
-          }
-        }
-        // Agents near fires get warmth bonus (energy recovery)
-        for (const agent of agents) {
-          if (agent.health <= 0) continue;
-          for (const key of world.naturalFires.keys()) {
-            const [fx, fz] = key.split(',').map(Number);
-            const dist = Math.hypot(agent.x - fx, agent.z - fz);
-            if (dist < 4) {
-              agent.needs.energy = Math.min(1, (agent.needs.energy ?? 0) + 0.0003 * delta);
-              break; // one fire bonus is enough
-            }
-          }
-        }
-        // Slight ambient boost when fires exist at night
-        if (wr._hemi) {
-          wr._hemi.intensity = Math.max(wr._hemi.intensity, 0.45);
-        }
-      }
 
     // Rendering always runs (for smooth camera)
     // WASD camera pan
