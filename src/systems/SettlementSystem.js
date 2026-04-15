@@ -89,6 +89,55 @@ export class SettlementSystem {
   }
 
   /**
+   * CAD-174: Check if settlements with governance + pop > 10 should place walls.
+   * Walls are placed around a perimeter of radius 4 tiles from the settlement centre.
+   * @param {object[]} agents
+   * @param {object} world
+   */
+  checkFortificationConstruction(agents, world) {
+    for (const s of this.settlements) {
+      if (s.hasWalls) continue;
+      if (s.memberIds.length <= 10) continue;
+
+      // Check if any member has governance knowledge
+      const members = agents.filter(a => s.memberIds.includes(a.id) && a.health > 0);
+      const hasGovernance = members.some(a => a.knowledge.has('governance'));
+      if (!hasGovernance) continue;
+
+      // Mark wall tiles around perimeter (radius 4)
+      s.hasWalls = true;
+      s.wallTiles = [];
+      const radius = 4;
+      const cx = Math.round(s.x);
+      const cz = Math.round(s.z);
+
+      // Perimeter ring at radius
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dz = -radius; dz <= radius; dz++) {
+          // Only tiles on the perimeter (distance ~ radius ±0.5)
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist >= radius - 0.7 && dist <= radius + 0.7) {
+            const wx = cx + dx;
+            const wz = cz + dz;
+            const tile = world.getTile(wx, wz);
+            if (tile && tile.type !== 'WATER' && tile.type !== 'DEEP_WATER' && tile.type !== 'MOUNTAIN') {
+              s.wallTiles.push({ x: wx, z: wz });
+              // Mark tile as a wall tile for traversal cost
+              tile.isWall = true;
+            }
+          }
+        }
+      }
+
+      // Register wall tiles on world for traversal cost checks
+      if (!world._wallTileSet) world._wallTileSet = new Set();
+      for (const wt of s.wallTiles) {
+        world._wallTileSet.add(`${wt.x},${wt.z}`);
+      }
+    }
+  }
+
+  /**
    * CAD-175: Check if any settlement should build a temple.
    * When 3+ members have animism or ritual concept and no temple exists yet, mark it.
    * @param {object[]} agents

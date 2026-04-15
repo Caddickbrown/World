@@ -1873,6 +1873,58 @@ export class TerrainRenderer {
   }
 
   /**
+   * CAD-174: Render fortification walls for settlements with hasWalls=true.
+   * Walls are grey stone barriers (BoxGeometry) placed at each wall tile.
+   * Called from main.js when settlement wall state changes.
+   */
+  updateWalls(settlements) {
+    // Remove old wall meshes
+    if (this._wallMeshes) {
+      for (const m of this._wallMeshes) {
+        this.scene.remove(m);
+        m.geometry.dispose();
+        m.material.dispose();
+      }
+    }
+    this._wallMeshes = [];
+
+    const walled = settlements.filter(s => s.hasWalls && s.wallTiles?.length > 0);
+    if (walled.length === 0) return;
+
+    const totalWalls = walled.reduce((sum, s) => sum + s.wallTiles.length, 0);
+    const wallGeom = new THREE.BoxGeometry(0.2, 0.8, 1.0);
+    const wallMat  = new THREE.MeshLambertMaterial({ color: 0x7a7a6e }); // grey stone
+    const wallMesh = new THREE.InstancedMesh(wallGeom, wallMat, totalWalls);
+    wallMesh.castShadow = true;
+    wallMesh.receiveShadow = true;
+
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+
+    for (const s of walled) {
+      for (const wt of s.wallTiles) {
+        const tile = this.world.getTile(wt.x, wt.z);
+        const surfH = tile ? (TILE_HEIGHT[tile.type] ?? 0.14) + (tile.elevation ?? 0) * 0.08 : 0.14;
+        // Orient wall segment to face settlement centre
+        const angle = Math.atan2(wt.z - s.z, wt.x - s.x) + Math.PI / 2;
+        dummy.position.set(
+          wt.x * TILE_SIZE + TILE_SIZE / 2,
+          surfH + 0.4,
+          wt.z * TILE_SIZE + TILE_SIZE / 2,
+        );
+        dummy.rotation.set(0, angle, 0);
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        wallMesh.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+
+    wallMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(wallMesh);
+    this._wallMeshes.push(wallMesh);
+  }
+
+  /**
    * CAD-175: Render temple structures for settlements with hasTemple=true.
    * Each temple is a circle of tall thin stone columns (CylinderGeometry).
    * Called from main.js when settlement state changes.

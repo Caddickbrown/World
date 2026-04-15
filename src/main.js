@@ -1318,17 +1318,26 @@ async function init() {
         world._contactEvents = [];
       }
 
-      // ── CAD-175: Temple construction check (throttled) ─────────────────────
+      // ── CAD-175/174: Temple + fortification construction checks (throttled) ─
       if (!world._templeCheckTimer) world._templeCheckTimer = 0;
       world._templeCheckTimer += delta;
       if (world._templeCheckTimer >= 5) {
         world._templeCheckTimer = 0;
+        // CAD-175: Temple
         const prevTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
         settlementSystem.checkTempleConstruction(agents);
         const newTempleCount = settlementSystem.settlements.filter(s => s.hasTemple).length;
         if (newTempleCount > prevTempleCount) {
           terrainRenderer.updateTemples(settlementSystem.settlements);
           historyLog.add('milestone', 'A temple was raised at a settlement', time.day);
+        }
+        // CAD-174: Fortification walls
+        const prevWallCount = settlementSystem.settlements.filter(s => s.hasWalls).length;
+        settlementSystem.checkFortificationConstruction(agents, world);
+        const newWallCount = settlementSystem.settlements.filter(s => s.hasWalls).length;
+        if (newWallCount > prevWallCount) {
+          terrainRenderer.updateWalls(settlementSystem.settlements);
+          historyLog.add('milestone', 'Walls were erected around a settlement', time.day);
         }
       }
 

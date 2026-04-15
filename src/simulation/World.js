@@ -534,6 +534,8 @@ export class World {
     if (!tile) return 1.0;
     if (tile.river) return knowledge.has('rope_bridge') ? 1.0 : 1.8;
     if (tile.type === TileType.DESERT) return 1.5;
+    // CAD-174: Wall tiles slow movement 3x
+    if (tile.isWall) return 3.0;
     return 1.0;
   }
 
