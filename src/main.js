@@ -676,12 +676,20 @@ async function init() {
       selectedAgent = hit;
       selectedTile  = null;
       hit.selected = true;
+      // Auto-follow the clicked agent; clicking the same agent again cancels follow
+      if (followTarget === hit) {
+        setFollowTarget(null);
+      } else {
+        setFollowTarget(hit);
+      }
       updateInfoPanel(hit);
       document.getElementById('info-panel').classList.remove('hidden');
     } else {
       if (selectedAgent) selectedAgent.selected = false;
       selectedAgent = null;
       selectedTile  = null;
+      // Cancel follow when clicking empty space
+      setFollowTarget(null);
 
       // Check for nearby animal before falling back to tile
       const animal = terrainRenderer.hitTestAnimals(groundPoint.x, groundPoint.z);
