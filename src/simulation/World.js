@@ -243,7 +243,7 @@ export class World {
         const gatherable = type === TileType.GRASS || type === TileType.WOODLAND || type === TileType.FOREST;
         // CAD-211: Forest tiles get a tree lifecycle — initial age spread so not all trees are the same stage
         const isForest = type === TileType.FOREST;
-        const initTreeAge = isForest ? Math.floor(Math.sin(x * 71.3 + z * 53.7) * 0.5 + 0.5) * 250 : undefined;
+        const initTreeAge = isForest ? Math.floor((Math.sin(x * 71.3 + z * 53.7) * 0.5 + 0.5) * 250) : undefined;
         // CAD-203: ~5% of FOREST tiles are fruit trees (flagged, not a new TileType)
         const isFruitTree = isForest && (Math.sin(x * 97.3 + z * 61.7) * 0.5 + 0.5) < 0.05;
         tiles[z][x] = {
