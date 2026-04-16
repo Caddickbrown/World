@@ -106,7 +106,7 @@ class TerrainChunk {
 
       tiles.forEach((tile, i) => {
         const hVariation = baseH + tile.elevation * 0.08;
-        const lVariation = l + (Math.sin(tile.x * 3.1 + tile.z * 2.7) * 0.5 + 0.5) * 6 - 3;
+        const lVariation = l + (Math.sin(tile.x * 3.1 + tile.z * 2.7) * 0.5 + 0.5) * 8 - 4 + (Math.sin(tile.x * 17.3 + tile.z * 13.7) * 0.5 + 0.5) * 4 - 2;
 
         if (isMountain) {
           const widthVar = 0.85 + rngFn(tile.x, tile.z, 14) * 0.25;
