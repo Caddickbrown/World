@@ -61,7 +61,8 @@ let latestWorkerState = null;
 // Whether the worker has finished its INIT
 let workerReady = false;
 
-const AGENT_COUNT = 12;
+// CAD-163: initial agent count derived from carrying capacity (target 80+)
+// Computed after world init below — see initAgentCount
 const WILD_HORSE_COUNT = 4;
 const PREDATOR_COUNT = 3;
 
@@ -147,6 +148,8 @@ async function init() {
   try {
   world = new World();
   world.naturalFires = new Map();
+  // CAD-163: dynamic initial population based on carrying capacity (target 80+)
+  const initAgentCount = Math.min(80, Math.max(20, Math.floor(world.getCarryingCapacity())));
   let lightningCooldown = 0;
   conceptGraph = new ConceptGraph(conceptsData);
   // Proxy agents array — populated from worker STATE messages, not local construction.
@@ -158,7 +161,7 @@ async function init() {
     simWorker.postMessage({
       type: 'INIT',
       seed: world.seed,
-      agentCount: AGENT_COUNT,
+      agentCount: initAgentCount, // CAD-163: dynamic population
       conceptsData,
       itemsData: itemsArr,
     });
