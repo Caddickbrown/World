@@ -36,6 +36,7 @@ const PREDATOR_COUNT = 3;
 
 let world = null;
 let agents = [];
+let carryingCapacity = 80; // CAD-163: set in initSim from world
 let conceptGraph = null;
 let time = null;
 let weather = null;
@@ -153,6 +154,9 @@ function initSim(seed, agentCount, conceptsData) {
   predators = world.getWildHorseSpawnPoints(PREDATOR_COUNT).map(
     p => new Predator(p.x, p.z, Math.random() < 0.7 ? 'wolf' : 'bear')
   );
+
+  // CAD-163: store carrying capacity for population pressure
+  carryingCapacity = world.getCarryingCapacity();
 
   pendingEvents = [];
   _prevTileSnapshot = snapshotTileTypes();
@@ -299,9 +303,22 @@ function runTick(realDelta, inputs) {
     }
 
     // Birth events
+    // CAD-163: enforce carrying capacity pressure
+    const _alivePop = agents.filter(a => a.health > 0).length;
+    if (_alivePop > carryingCapacity) {
+      // Over capacity — starvation pressure: random agents lose health
+      const overBy = _alivePop - carryingCapacity;
+      const starvationChance = Math.min(0.6, overBy / carryingCapacity);
+      for (const a of agents) {
+        if (a.health > 0 && Math.random() < starvationChance * 0.05) {
+          a.health = Math.max(0, a.health - 15);
+        }
+      }
+    }
     for (const evt of conceptGraph.drainBirthEvents()) {
       const alive = agents.filter(a => a.health > 0).length;
-      // No carrying capacity check here — main thread enforces pop limit
+      // CAD-163: hard ceiling at carrying capacity — suppress new births when at capacity
+      if (alive >= carryingCapacity) continue;
       let bx = evt.x, bz = evt.z;
       if (!world.isWalkable(Math.floor(bx), Math.floor(bz))) {
         const tile = world.findNearest(Math.floor(bx), Math.floor(bz), [TileType.GRASS, TileType.FOREST], 4);
