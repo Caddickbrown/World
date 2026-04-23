@@ -47,6 +47,7 @@ import { WolfRenderer }         from './renderer/WolfRenderer.js';
 import { DeerRenderer }         from './renderer/DeerRenderer.js';
 import { FoxRenderer as FoxRnd } from './renderer/FoxRenderer.js';
 import { WhaleRenderer }        from './renderer/WhaleRenderer.js';
+import { RobinRenderer }        from './renderer/RobinRenderer.js';
 
 // ── Web Worker: authoritative simulation runs off-main-thread ──────────────
 const simWorker = new Worker(
@@ -145,6 +146,7 @@ async function init() {
   let foxRenderer2;
   let whales = [];
   let whaleRenderer;
+  let robinRenderer;
   try {
   world = new World();
   world.naturalFires = new Map();
@@ -203,6 +205,7 @@ async function init() {
 
     whales       = createWhales(world);
     whaleRenderer = new WhaleRenderer(wr.scene, whales, world);
+    robinRenderer = new RobinRenderer(wr.scene, world);
   }
 
   time = new TimeSystem();
@@ -350,6 +353,7 @@ async function init() {
     deerRenderer?.dispose();
     foxRenderer2?.dispose();
     whaleRenderer?.dispose();
+    robinRenderer?.dispose();
 
     world = new World();
     world.naturalFires = new Map();
@@ -386,6 +390,7 @@ async function init() {
     frogs             = createFrogs(world);         // CAD-95
     frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
     insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world); // CAD-92
+    robinRenderer     = new RobinRenderer(wr.scene, world);
     animalSkillSystem.clear(); // CAD-87
     {
       const packSpawn = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
@@ -474,6 +479,7 @@ async function init() {
         deerRenderer?.dispose();
         foxRenderer2?.dispose();
         whaleRenderer?.dispose();
+        robinRenderer?.dispose();
 
         world = new World(val);
         world.naturalFires = new Map();
@@ -502,6 +508,7 @@ async function init() {
         frogs             = createFrogs(world);
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
+        robinRenderer     = new RobinRenderer(wr.scene, world);
         animalSkillSystem.clear();
         {
           const ps = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
@@ -585,6 +592,7 @@ async function init() {
         deerRenderer?.dispose();
         foxRenderer2?.dispose();
         whaleRenderer?.dispose();
+        robinRenderer?.dispose();
 
         world = World.deserialize(saveData);
         world.naturalFires = new Map();
@@ -623,6 +631,7 @@ async function init() {
         frogs             = createFrogs(world);
         frogRenderer      = new FrogRenderer(wr.scene, frogs, world);
         insectSwarmRenderer = new InsectSwarmRenderer(wr.scene, world);
+        robinRenderer     = new RobinRenderer(wr.scene, world);
         animalSkillSystem.clear();
         {
           const ps = world.getWildHorseSpawnPoints(1)[0] ?? { x: world.width / 2, z: world.height / 2 };
@@ -1340,6 +1349,7 @@ async function init() {
     eagleRenderer?.update(delta > 0 ? delta : 0);
     frogRenderer?.update(delta > 0 ? delta : 0);          // CAD-95
     insectSwarmRenderer?.update(delta > 0 ? delta : 0);   // CAD-92
+    robinRenderer?.update(delta > 0 ? delta : 0);
     rainbowRenderer?.update(realDelta);                    // CAD-121 (always real time)
     // Wolf / Deer / Fox / Whale — tick simulation + renderer each frame
     if (delta > 0) {
