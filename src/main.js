@@ -1796,6 +1796,15 @@ async function init() {
               showNotification(evt.message, 'social');
               historyLog.add('conflict', evt.message, time.day);
               break;
+            case 'trade': {
+              const itemName = (id) => itemDefs.get(id)?.name ?? id;
+              const msg = `${evt.agentAName} traded ${itemName(evt.aGave)} for ${itemName(evt.bGave)} with ${evt.agentBName}`;
+              showNotification('🤝 ' + msg, 'social');
+              historyLog.add('trade', msg, time.day);
+              const trader = agents.find(a => a.id === evt.agentAId);
+              if (trader) showSpeechBubble(trader, '🤝');
+              break;
+            }
             case 'war':
               showNotification('⚔️ ' + evt.message, 'social');
               historyLog.add('war', evt.message, time.day);

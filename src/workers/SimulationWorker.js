@@ -24,6 +24,7 @@ import { DisasterSystem } from '../systems/DisasterSystem.js';
 import { EcologySystem } from '../systems/EcologySystem.js';
 import { ConflictSystem } from '../systems/ConflictSystem.js';
 import { SettlementSystem } from '../systems/SettlementSystem.js';
+import { TradingSystem } from '../systems/TradingSystem.js';
 import { LineageTracker } from '../systems/LineageTracker.js';
 import { Achievements } from '../systems/Achievements.js';
 import { WildHorse } from '../simulation/WildHorse.js';
@@ -51,6 +52,7 @@ let itemDefs = new Map();
 let lightningCooldown = 0;
 let _lastTickErrorWarn = 0; // throttle for aggregated agent-tick error warnings
 let conflictCheckTimer = 0;       // throttle for pairwise faction conflicts
+let tradeCheckTimer = 0;          // throttle for agent-to-agent trade attempts
 let warCooldowns = new Map();     // settlement-pair war cooldowns ("idA_idB" -> day)
 let lastWarCheckDay = -1;         // settlement wars checked once per game day
 
@@ -163,6 +165,7 @@ function initSim(seed, agentCount, conceptsData) {
   carryingCapacity = world.getCarryingCapacity();
 
   conflictCheckTimer = 0;
+  tradeCheckTimer = 0;
   warCooldowns = new Map();
   lastWarCheckDay = -1;
 
@@ -436,6 +439,41 @@ function runTick(realDelta, inputs) {
         }
       }
       s._prevMemberIds = new Set(s.memberIds);
+    }
+
+    // Agent-to-agent trading — throttled (~2s); both partners must know 'trade'.
+    // Uses _p2pTradeCooldown (distinct from _traderCooldown, which drives the
+    // CAD-178 inter-settlement trader journeys).
+    tradeCheckTimer += delta;
+    if (tradeCheckTimer >= 2 && itemDefs.size > 0) {
+      const tradeInterval = tradeCheckTimer;
+      tradeCheckTimer = 0;
+      for (const a of agents) {
+        a._p2pTradeCooldown = Math.max(0, (a._p2pTradeCooldown ?? 0) - tradeInterval);
+        if (a.health <= 0 || a._p2pTradeCooldown > 0 || !a.knowledge.has('trade')) continue;
+        const partner = TradingSystem.findTradePartner(a, world.spatialGrid.getNearby(a.x, a.z, 4), 3);
+        if (!partner || (partner._p2pTradeCooldown ?? 0) > 0) continue;
+        const res = TradingSystem.tryTrade(a, partner, itemDefs);
+        if (res.traded) {
+          a._p2pTradeCooldown = 30 + Math.random() * 30;
+          partner._p2pTradeCooldown = 30 + Math.random() * 30;
+          pendingEvents.push({
+            type: 'trade',
+            message: `${a.name} traded with ${partner.name}`,
+            x: a.x,
+            z: a.z,
+            agentAId: a.id,
+            agentBId: partner.id,
+            agentAName: a.name,
+            agentBName: partner.name,
+            aGave: res.aGave,
+            bGave: res.bGave,
+          });
+        } else {
+          // Nothing tradeable right now — back off briefly instead of rescanning
+          a._p2pTradeCooldown = 8;
+        }
+      }
     }
 
     // CAD-176: settlement wars — checked once per game day
