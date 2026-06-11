@@ -166,6 +166,8 @@ async function init() {
       agentCount: initAgentCount, // CAD-163: dynamic population
       conceptsData,
       itemsData: itemsArr,
+      // Worker has no localStorage — seed it with the persisted unlocks
+      unlockedAchievements: [...new Achievements().unlocked],
     });
   }
 
@@ -320,8 +322,30 @@ async function init() {
     const isOpen = !settingsPanel.classList.contains('hidden');
     settingsPanel.classList.toggle('hidden', isOpen);
     hamburgerBtn.classList.toggle('open', !isOpen);
-    if (!isOpen) updateStatsDisplay();
+    if (!isOpen) {
+      updateStatsDisplay();
+      renderAchievements();
+    }
   });
+
+  // ── Achievements panel ─────────────────────────────────────────────────
+  function renderAchievements() {
+    const list = document.getElementById('achievements-list');
+    if (!list) return;
+    list.replaceChildren(...Achievements.ACHIEVEMENTS.map(a => {
+      const unlocked = achievements.isUnlocked(a.id);
+      const row = document.createElement('div');
+      row.className = 'achievement-row' + (unlocked ? '' : ' locked');
+      const title = document.createElement('div');
+      title.className = 'achievement-title';
+      title.textContent = `${unlocked ? a.icon : '🔒'} ${a.title}`;
+      const desc = document.createElement('div');
+      desc.className = 'achievement-desc';
+      desc.textContent = a.description;
+      row.append(title, desc);
+      return row;
+    }));
+  }
 
   // Close settings if user clicks outside it
   document.addEventListener('click', e => {
@@ -372,6 +396,7 @@ async function init() {
       seed: world.seed,
       agentCount: startPop,
       conceptsData,
+      unlockedAchievements: [...achievements.unlocked],
     });
     buildingRenderer = new BuildingRenderer(wr.scene, world);
     horses.length = 0;
@@ -1835,6 +1860,12 @@ async function init() {
             case 'achievement':
               showNotification(evt.message, 'social');
               historyLog.add('achievement', evt.message, time.day);
+              // Persist the unlock (the worker's instance can't reach localStorage)
+              if (evt.achievementId) {
+                achievements.unlocked.add(evt.achievementId);
+                achievements._save();
+                renderAchievements();
+              }
               break;
             case 'conflict':
               showNotification(evt.message, 'social');

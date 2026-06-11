@@ -137,7 +137,7 @@ function buildWorldStats() {
 
 // ── Initialise simulation ────────────────────────────────────────────────────
 
-function initSim(seed, agentCount, conceptsData) {
+function initSim(seed, agentCount, conceptsData, unlockedAchievements = null) {
   world = new World(seed);
   world.naturalFires = new Map();
   lightningCooldown = 0;
@@ -155,7 +155,8 @@ function initSim(seed, agentCount, conceptsData) {
   ecologySystem = new EcologySystem();
   settlementSystem = new SettlementSystem();
   lineageTracker = new LineageTracker();
-  achievements = new Achievements();
+  // Seeded from the main thread — localStorage doesn't exist in Workers
+  achievements = new Achievements(unlockedAchievements ?? []);
 
   horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
   predators = world.getWildHorseSpawnPoints(PREDATOR_COUNT).map(
@@ -521,6 +522,9 @@ function runTick(realDelta, inputs) {
         type: 'achievement',
         message: `${a.icon} Achievement unlocked: ${a.title}`,
         x: 0, z: 0,
+        achievementId: a.id,
+        icon: a.icon,
+        title: a.title,
       });
     }
 
@@ -560,13 +564,13 @@ self.onmessage = async (e) => {
 
   try {
     if (data.type === 'INIT') {
-      const { seed, agentCount, conceptsData, itemsData } = data;
+      const { seed, agentCount, conceptsData, itemsData, unlockedAchievements } = data;
 
       if (itemsData) {
         itemDefs = new Map(itemsData.map(item => [item.id, item]));
       }
 
-      initSim(seed, agentCount, conceptsData);
+      initSim(seed, agentCount, conceptsData, unlockedAchievements);
 
       // Send INIT_COMPLETE with full tile data
       self.postMessage({
@@ -586,8 +590,8 @@ self.onmessage = async (e) => {
     }
 
     else if (data.type === 'RESET') {
-      const { seed, agentCount, conceptsData } = data;
-      initSim(seed ?? Math.floor(Math.random() * 9999), agentCount, conceptsData);
+      const { seed, agentCount, conceptsData, unlockedAchievements } = data;
+      initSim(seed ?? Math.floor(Math.random() * 9999), agentCount, conceptsData, unlockedAchievements);
       self.postMessage({
         type: 'INIT_COMPLETE',
         fullTiles: world.tiles.flat(),
