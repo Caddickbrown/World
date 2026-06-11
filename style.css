@@ -677,6 +677,26 @@ body {
   line-height: 1.7;
 }
 
+/* The panel itself is click-through, but its buttons must stay interactive
+   (overlay toggles: graph, knowledge, resource, heatmap, timeline) */
+#stats-panel button {
+  pointer-events: all;
+}
+
+/* Overlay panels sit inside the click-through #hud — without this their
+   close buttons and scrollbars receive no pointer events */
+#timeline-panel,
+#pop-graph-panel,
+#knowledge-overlay-panel {
+  pointer-events: all;
+}
+
+/* Seed input + New World button (in the click-through #hud-top) */
+#seed-controls input,
+#seed-controls button {
+  pointer-events: all;
+}
+
 .stats-row {
   display: flex;
   justify-content: space-between;
