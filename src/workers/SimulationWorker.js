@@ -49,6 +49,7 @@ let horses = [];
 let predators = [];
 let itemDefs = new Map();
 let lightningCooldown = 0;
+let _lastTickErrorWarn = 0; // throttle for aggregated agent-tick error warnings
 
 // Pending events to flush each tick
 let pendingEvents = [];
@@ -259,15 +260,23 @@ function runTick(realDelta, inputs) {
 
     // Agent ticks — rebuild the spatial grid first so proximity queries are O(1)
     world.updateSpatialGrid(agents);
+    let tickErrors = 0;
+    let firstTickError = null;
     for (const agent of agents) {
       if (agent?.health > 0) {
         try {
           const wMult = weather.energyDrainMultAt(agent.x, agent.z);
           agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, world.spatialGrid, time);
         } catch (e) {
-          // swallow per-agent errors
+          // Per-agent errors are non-fatal; aggregate and warn (throttled below)
+          tickErrors++;
+          if (!firstTickError) firstTickError = e?.stack ?? e?.message ?? String(e);
         }
       }
+    }
+    if (tickErrors > 0 && (_lastTickErrorWarn === 0 || Date.now() - _lastTickErrorWarn > 5000)) {
+      _lastTickErrorWarn = Date.now();
+      console.warn(`[SimWorker] ${tickErrors} agent tick error(s) this tick; first:`, firstTickError);
     }
 
     // Concept graph events
