@@ -57,13 +57,18 @@ export class Achievements {
       description: 'All agents have hunger above 0.8',
       icon: '🥗',
       check({ agents }) {
-        return agents.length > 0 && agents.every(a => a.hunger > 0.8);
+        const alive = agents.filter(a => a.health > 0);
+        return alive.length > 0 && alive.every(a => (a.needs?.hunger ?? 0) > 0.8);
       },
     },
   ];
 
-  constructor() {
-    this.unlocked = new Set(this._load());
+  /**
+   * @param {string[]|null} unlockedIds — seed the unlocked set explicitly
+   *   (used in the Worker, where localStorage doesn't exist)
+   */
+  constructor(unlockedIds = null) {
+    this.unlocked = new Set(unlockedIds ?? this._load());
   }
 
   _load() {
@@ -76,7 +81,13 @@ export class Achievements {
   }
 
   _save() {
-    localStorage.setItem('world-achievements', JSON.stringify([...this.unlocked]));
+    // localStorage is undefined in Workers — persistence happens main-thread-side
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem('world-achievements', JSON.stringify([...this.unlocked]));
+    } catch {
+      // Storage may be full or blocked — non-fatal
+    }
   }
 
   /**

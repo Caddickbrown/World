@@ -22,11 +22,9 @@ import { WeatherSystem }     from './systems/WeatherSystem.js';
 import { MinimapRenderer }   from './renderer/MinimapRenderer.js';
 import { HistoryLog }        from './systems/HistoryLog.js';
 import { DisasterSystem }    from './systems/DisasterSystem.js';
-import { TradingSystem }     from './systems/TradingSystem.js';
 import { ConflictSystem }    from './systems/ConflictSystem.js';
 import { Achievements }      from './systems/Achievements.js';
 import { LineageTracker }    from './systems/LineageTracker.js';
-import { CraftingSystem }    from './systems/CraftingSystem.js';
 import { SettlementSystem }  from './systems/SettlementSystem.js';
 import { audio }             from './systems/AudioSystem.js';
 import { RabbitRenderer }   from './renderer/RabbitRenderer.js';
@@ -166,6 +164,8 @@ async function init() {
       agentCount: initAgentCount, // CAD-163: dynamic population
       conceptsData,
       itemsData: itemsArr,
+      // Worker has no localStorage — seed it with the persisted unlocks
+      unlockedAchievements: [...new Achievements().unlocked],
     });
   }
 
@@ -225,8 +225,6 @@ async function init() {
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
-  // CAD-176: War cooldown map — persisted between ticks
-  const _warCooldowns = new Map();
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -322,8 +320,30 @@ async function init() {
     const isOpen = !settingsPanel.classList.contains('hidden');
     settingsPanel.classList.toggle('hidden', isOpen);
     hamburgerBtn.classList.toggle('open', !isOpen);
-    if (!isOpen) updateStatsDisplay();
+    if (!isOpen) {
+      updateStatsDisplay();
+      renderAchievements();
+    }
   });
+
+  // ── Achievements panel ─────────────────────────────────────────────────
+  function renderAchievements() {
+    const list = document.getElementById('achievements-list');
+    if (!list) return;
+    list.replaceChildren(...Achievements.ACHIEVEMENTS.map(a => {
+      const unlocked = achievements.isUnlocked(a.id);
+      const row = document.createElement('div');
+      row.className = 'achievement-row' + (unlocked ? '' : ' locked');
+      const title = document.createElement('div');
+      title.className = 'achievement-title';
+      title.textContent = `${unlocked ? a.icon : '🔒'} ${a.title}`;
+      const desc = document.createElement('div');
+      desc.className = 'achievement-desc';
+      desc.textContent = a.description;
+      row.append(title, desc);
+      return row;
+    }));
+  }
 
   // Close settings if user clicks outside it
   document.addEventListener('click', e => {
@@ -374,6 +394,7 @@ async function init() {
       seed: world.seed,
       agentCount: startPop,
       conceptsData,
+      unlockedAchievements: [...achievements.unlocked],
     });
     buildingRenderer = new BuildingRenderer(wr.scene, world);
     horses.length = 0;
@@ -606,6 +627,16 @@ async function init() {
           for (const ad of saveData.agents) {
             const a = new Agent(ad.x, ad.z);
             a.health = ad.health ?? 1;
+            // Restore the fields serialize() saves (name/age/needs/task were dropped before)
+            if (ad.name) a.name = ad.name;
+            if (ad.age != null) a.age = ad.age;
+            if (ad.maxAge != null) a.maxAge = ad.maxAge;
+            if (ad.needs) a.needs = { ...a.needs, ...ad.needs };
+            if (ad.task) a.task = ad.task;
+            a.infected = ad.infected ?? false;
+            a.infectionTimer = ad.infectionTimer ?? 0;
+            a.infectionDuration = ad.infectionDuration ?? 60;
+            a.immuneTimer = ad.immuneTimer ?? 0;
             if (ad.knowledge) ad.knowledge.forEach(k => a.knowledge.add(k));
             if (ad.inventory?.deserialize) a.inventory.deserialize(ad.inventory);
             ConflictSystem.assignFaction(a);
@@ -936,7 +967,8 @@ async function init() {
     const mm = Math.floor((todHours % 1) * 60).toString().padStart(2, '0');
     set('sp-time', hh + ':' + mm);
     set('sp-weather', weather.label);
-    set('sp-settlements', settlementSystem.settlements.length);
+    // Settlement state is owned by the worker; the main-thread instance is never ticked
+    set('sp-settlements', latestWorkerState?.worldStats?.settlements ?? 0);
   }
 
   // ── Speech bubble (CAD-330) ────────────────────────────────────────────
@@ -1458,6 +1490,48 @@ async function init() {
     popGraphBtn.style.background = 'rgba(255,255,255,0.1)';
   });
 
+  // ── Timeline panel ─────────────────────────────────────────────────────
+  let timelineVisible = false;
+  let _lastTimelineCount = -1;
+  const timelinePanel   = document.getElementById('timeline-panel');
+  const timelineBtn     = document.getElementById('timeline-btn');
+  const timelineClose   = document.getElementById('timeline-close');
+  const timelineContent = document.getElementById('timeline-content');
+
+  function updateTimeline() {
+    if (!timelineVisible || !timelineContent) return;
+    if (historyLog.entries.length === _lastTimelineCount) return;
+    _lastTimelineCount = historyLog.entries.length;
+    if (historyLog.entries.length === 0) {
+      timelineContent.innerHTML = '<em style="opacity:.4">Nothing has happened yet...</em>';
+      return;
+    }
+    timelineContent.replaceChildren(...historyLog.recent.slice(0, 60).map(entry => {
+      const row = document.createElement('div');
+      row.className = 'timeline-entry';
+      const msg = document.createElement('span');
+      msg.textContent = `${HistoryLog.icon(entry.type)} ${entry.message}`;
+      const day = document.createElement('span');
+      day.className = 'timeline-day';
+      day.textContent = 'Day ' + entry.day;
+      row.append(msg, day);
+      return row;
+    }));
+  }
+
+  if (timelineBtn) timelineBtn.addEventListener('click', () => {
+    timelineVisible = !timelineVisible;
+    timelinePanel.style.display = timelineVisible ? 'block' : 'none';
+    timelineBtn.style.background = timelineVisible ? 'rgba(80,220,120,0.3)' : 'rgba(255,255,255,0.1)';
+    _lastTimelineCount = -1;
+    if (timelineVisible) updateTimeline();
+  });
+  if (timelineClose) timelineClose.addEventListener('click', () => {
+    timelineVisible = false;
+    timelinePanel.style.display = 'none';
+    timelineBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
   // ── CAD-160: Knowledge overlay ────────────────────────────────────────
   let knowledgeOverlayVisible = false;
   const knowledgePanel  = document.getElementById('knowledge-overlay-panel');
@@ -1639,6 +1713,7 @@ async function init() {
     if (resourceOverlayVisible) drawResourceOverlay();
     if (heatmapOverlayVisible) drawHeatmapOverlay();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+    if (timelineVisible) updateTimeline();
   }
 
   // ── Worker message handler ─────────────────────────────────────────────
@@ -1788,10 +1863,48 @@ async function init() {
               break;
             case 'disaster':
               showNotification(evt.message, 'env');
+              historyLog.add('disaster', evt.message, time.day);
               break;
             case 'achievement':
               showNotification(evt.message, 'social');
-              historyLog.add('discovery', evt.message, time.day);
+              historyLog.add('achievement', evt.message, time.day);
+              // Persist the unlock (the worker's instance can't reach localStorage)
+              if (evt.achievementId) {
+                achievements.unlocked.add(evt.achievementId);
+                achievements._save();
+                renderAchievements();
+              }
+              break;
+            case 'conflict':
+              showNotification(evt.message, 'social');
+              historyLog.add('conflict', evt.message, time.day);
+              break;
+            case 'trade': {
+              const itemName = (id) => itemDefs.get(id)?.name ?? id;
+              const msg = `${evt.agentAName} traded ${itemName(evt.aGave)} for ${itemName(evt.bGave)} with ${evt.agentBName}`;
+              showNotification('🤝 ' + msg, 'social');
+              historyLog.add('trade', msg, time.day);
+              const trader = agents.find(a => a.id === evt.agentAId);
+              if (trader) showSpeechBubble(trader, '🤝');
+              break;
+            }
+            case 'war':
+              showNotification('⚔️ ' + evt.message, 'social');
+              historyLog.add('war', evt.message, time.day);
+              audio.playEvent('death');
+              break;
+            case 'death':
+              historyLog.addDeath({ name: evt.agentName }, evt.cause, time.day);
+              showNotification('💀 ' + HistoryLog.formatDeath({ name: evt.agentName }, evt.cause), 'social');
+              audio.playEvent('death');
+              break;
+            case 'disease_outbreak':
+              showNotification(evt.message, 'env');
+              historyLog.add('disease', evt.message, time.day);
+              break;
+            case 'disease_recovery':
+              // History only — recoveries are too frequent for notifications
+              historyLog.add('disease', evt.message, time.day);
               break;
           }
         }

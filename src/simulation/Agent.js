@@ -102,8 +102,14 @@ export class Agent {
     /** Starvation: tracks how long hunger has been at zero (game-sec) */
     this.starvationTimer = 0;
 
-    /** Cause of death: 'starvation', 'old_age', or null if alive */
+    /** Cause of death: 'starvation', 'old_age', 'disease', 'conflict', or null if alive */
     this.deathCause = null;
+
+    /** Disease state — infections are started by DiseaseSystem (worker-side) */
+    this.infected = false;
+    this.infectionTimer = 0;
+    this.infectionDuration = 60; // game-sec until recovery (shorter with medicine)
+    this.immuneTimer = 0;
 
     /** Family relationships */
     this.parents  = []; // array of agent IDs
@@ -166,11 +172,11 @@ export class Agent {
   /** True when the agent has reached 75% of its effective lifespan */
   get isElderly() { return this.age >= this.lifeExpectancy * 0.75; }
 
-  /** Movement speed multiplier — elderly agents slow down */
-  get speedMult() { return this.isElderly ? 0.7 : 1.0; }
+  /** Movement speed multiplier — driven by life stage (elders and children slower) */
+  get speedMult() { return this.lifeStageModifiers.speedMult; }
 
-  /** Gathering efficiency multiplier — elderly agents gather less */
-  get gatherMult() { return this.isElderly ? 0.8 : 1.0; }
+  /** Gathering efficiency multiplier — driven by life stage */
+  get gatherMult() { return this.lifeStageModifiers.gatherMult; }
 
   /** Backward-compatible curiosity accessor */
   get curiosity() { return this.personality.curiosity; }
@@ -273,7 +279,13 @@ export class Agent {
       this.infectionTimer += delta;
       this.health = Math.max(0, this.health - 0.0005 * delta);
       this.needs.energy = Math.max(0, this.needs.energy - 0.001 * delta);
-      if (this.infectionTimer >= 60) {
+      if (this.health <= 0) {
+        this._dropAllItems(world);
+        this.isDead = true;
+        this.deathCause = 'disease';
+        return;
+      }
+      if (this.infectionTimer >= this.infectionDuration) {
         this.infected = false;
         this.infectionTimer = 0;
         this.immuneTimer = 120;
@@ -572,7 +584,7 @@ export class Agent {
         if (this.knowledge.has('agriculture') && tile.type === TileType.GRASS) toolMult *= 1.35;
         let cookMult  = this.knowledge.has('cooking') ? 1.60 : 1.0;
         const yield_    = Math.max(0.15, tile.resource);
-        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * yield_);
+        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * yield_ * this.gatherMult);
         tile.resource = Math.max(0, tile.resource - 0.28 / toolMult);
       }
     }
@@ -598,7 +610,6 @@ export class Agent {
     const envMult = this._lastWeatherMult ?? 1.0;
 
     // CAD-175: Ritual gathering — agents with animism or ritual concept periodically gather
-    if (this._ritualCooldown > 0) this._ritualCooldown -= 0; // ticked below in movement block
     if ((this.knowledge.has('animism') || this.knowledge.has('ritual')) && this._ritualCooldown <= 0) {
       const settlement = world._settlementSystem?.getSettlementFor(this);
       if (settlement) {
@@ -616,7 +627,6 @@ export class Agent {
       if (this._traderCooldown <= 0 && world._settlementSystem) {
         if (this._startTraderJourney(world, world._settlementSystem)) return;
       }
-      if (this._traderCooldown > 0) this._traderCooldown -= 0; // will tick in tick()
     }
 
     // Low health — use medicine from inventory if available
@@ -935,10 +945,9 @@ export class Agent {
     // Teacher: bias toward other agents to share knowledge
     // Use SpatialGrid for nearby candidates when available, else fall back to allAgents
     if (taskDef?.seekSocial && allAgents.length > 1) {
-      const candidatePool = this._spatialGrid
+      const others = this._spatialGrid
         ? this._spatialGrid.getNearby(this.x, this.z, radius + 2).filter(a => a !== this && a.health > 0)
         : allAgents.filter(a => a !== this && a.health > 0);
-      const others = candidatePool.length > 0 ? candidatePool : allAgents.filter(a => a !== this && a.health > 0);
       if (others.length > 0 && Math.random() < 0.6) {
         const nearest = others.reduce((best, a) => {
           const d = Math.hypot(a.x - this.x, a.z - this.z);
@@ -1096,8 +1105,6 @@ export class Agent {
       const dist = Math.hypot(this.x - other.x, this.z - other.z);
       if (dist < 5.0) {
         conceptGraph.trySpread(this, other, SOCIAL_COOLDOWN);
-        // Disease spreading
-        this._trySpreadInfection(other);
         // CAD-185: track social history and potentially bond
         this._trackSocialAndBond(other);
         if (dist < 3.5) this._tryReproduce(other, conceptGraph);
@@ -1145,29 +1152,6 @@ export class Agent {
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
     // CAD-189: pass parent refs so heritable traits can be applied at birth
     conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name, parentAId: this.id, parentBId: other.id, parentAPersonality: this.personality, parentBPersonality: other.personality });
-  }
-
-  // ── Disease spreading ──────────────────────────────────────────────────
-
-  _trySpreadInfection(other) {
-    // Spread from this -> other
-    if (this.infected && !other.infected && !other.isImmune) {
-      let chance = 0.15;
-      if (other.knowledge.has('medicine')) chance *= 0.5;
-      if (Math.random() < chance) {
-        other.infected = true;
-        other.infectionTimer = 0;
-      }
-    }
-    // Spread from other -> this
-    if (other.infected && !this.infected && !this.isImmune) {
-      let chance = 0.15;
-      if (this.knowledge.has('medicine')) chance *= 0.5;
-      if (Math.random() < chance) {
-        this.infected = true;
-        this.infectionTimer = 0;
-      }
-    }
   }
 
   // ── Inventory actions ─────────────────────────────────────────────────

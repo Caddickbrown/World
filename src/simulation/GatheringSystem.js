@@ -68,7 +68,9 @@ export class GatheringSystem {
 
       // Calculate yield
       const rawYield = minYield + Math.random() * (maxYield - minYield);
-      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult * waterMult * fruitTreeMult));
+      // Life-stage efficiency (elders and children gather less); ?? 1 keeps bare test agents working
+      const lifeStageMult = agent.gatherMult ?? 1;
+      const finalYield = Math.max(0, Math.round(rawYield * toolMult * knowledgeMult * taskGatherBonus * resourceMult * waterMult * fruitTreeMult * lifeStageMult));
 
       if (finalYield > 0) {
         results.push({ itemId: itemDef.id, quantity: finalYield });

@@ -24,6 +24,8 @@ import { DisasterSystem } from '../systems/DisasterSystem.js';
 import { EcologySystem } from '../systems/EcologySystem.js';
 import { ConflictSystem } from '../systems/ConflictSystem.js';
 import { SettlementSystem } from '../systems/SettlementSystem.js';
+import { TradingSystem } from '../systems/TradingSystem.js';
+import { DiseaseSystem } from '../systems/DiseaseSystem.js';
 import { LineageTracker } from '../systems/LineageTracker.js';
 import { Achievements } from '../systems/Achievements.js';
 import { WildHorse } from '../simulation/WildHorse.js';
@@ -41,6 +43,7 @@ let conceptGraph = null;
 let time = null;
 let weather = null;
 let disasterSystem = null;
+let diseaseSystem = null;
 let ecologySystem = null;
 let settlementSystem = null;
 let lineageTracker = null;
@@ -49,6 +52,12 @@ let horses = [];
 let predators = [];
 let itemDefs = new Map();
 let lightningCooldown = 0;
+let _lastTickErrorWarn = 0; // throttle for aggregated agent-tick error warnings
+let conflictCheckTimer = 0;       // throttle for pairwise faction conflicts
+let tradeCheckTimer = 0;          // throttle for agent-to-agent trade attempts
+let warCooldowns = new Map();     // settlement-pair war cooldowns ("idA_idB" -> day)
+let lastWarCheckDay = -1;         // settlement wars checked once per game day
+let deadNotified = new Set();     // agent ids whose death event has been emitted
 
 // Pending events to flush each tick
 let pendingEvents = [];
@@ -97,6 +106,7 @@ function buildAgentState() {
     role: a.role || null,
     task: a.task || null,
     isDead: a.isDead || a.health <= 0,
+    isSick: !!a.infected,
     facingX: a.facingX,
     facingZ: a.facingZ,
     discoveryFlash: a.discoveryFlash,
@@ -130,7 +140,7 @@ function buildWorldStats() {
 
 // ── Initialise simulation ────────────────────────────────────────────────────
 
-function initSim(seed, agentCount, conceptsData) {
+function initSim(seed, agentCount, conceptsData, unlockedAchievements = null) {
   world = new World(seed);
   world.naturalFires = new Map();
   lightningCooldown = 0;
@@ -145,10 +155,12 @@ function initSim(seed, agentCount, conceptsData) {
   weather._totalTime = 0;
 
   disasterSystem = new DisasterSystem();
+  diseaseSystem = new DiseaseSystem();
   ecologySystem = new EcologySystem();
   settlementSystem = new SettlementSystem();
   lineageTracker = new LineageTracker();
-  achievements = new Achievements();
+  // Seeded from the main thread — localStorage doesn't exist in Workers
+  achievements = new Achievements(unlockedAchievements ?? []);
 
   horses = world.getWildHorseSpawnPoints(WILD_HORSE_COUNT).map(p => new WildHorse(p.x, p.z));
   predators = world.getWildHorseSpawnPoints(PREDATOR_COUNT).map(
@@ -157,6 +169,12 @@ function initSim(seed, agentCount, conceptsData) {
 
   // CAD-163: store carrying capacity for population pressure
   carryingCapacity = world.getCarryingCapacity();
+
+  conflictCheckTimer = 0;
+  tradeCheckTimer = 0;
+  warCooldowns = new Map();
+  lastWarCheckDay = -1;
+  deadNotified = new Set();
 
   pendingEvents = [];
   _prevTileSnapshot = snapshotTileTypes();
@@ -257,16 +275,25 @@ function runTick(realDelta, inputs) {
       }
     }
 
-    // Agent ticks
+    // Agent ticks — rebuild the spatial grid first so proximity queries are O(1)
+    world.updateSpatialGrid(agents);
+    let tickErrors = 0;
+    let firstTickError = null;
     for (const agent of agents) {
       if (agent?.health > 0) {
         try {
           const wMult = weather.energyDrainMultAt(agent.x, agent.z);
-          agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, null, time);
+          agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, world.spatialGrid, time);
         } catch (e) {
-          // swallow per-agent errors
+          // Per-agent errors are non-fatal; aggregate and warn (throttled below)
+          tickErrors++;
+          if (!firstTickError) firstTickError = e?.stack ?? e?.message ?? String(e);
         }
       }
+    }
+    if (tickErrors > 0 && (_lastTickErrorWarn === 0 || Date.now() - _lastTickErrorWarn > 5000)) {
+      _lastTickErrorWarn = Date.now();
+      console.warn(`[SimWorker] ${tickErrors} agent tick error(s) this tick; first:`, firstTickError);
     }
 
     // Concept graph events
@@ -374,6 +401,35 @@ function runTick(realDelta, inputs) {
     // ConflictSystem
     ConflictSystem.updateCooldowns(agents, delta);
 
+    // Minor faction conflicts — throttled pairwise scan (~1s of game time).
+    // The accumulated interval is passed as the probability delta so the
+    // per-second conflict chance stays frame-rate independent.
+    conflictCheckTimer += delta;
+    if (conflictCheckTimer >= 1) {
+      const conflictInterval = conflictCheckTimer;
+      conflictCheckTimer = 0;
+      const alivePop = agents.filter(a => a.health > 0).length;
+      for (const a of agents) {
+        if (a.health <= 0 || a.conflictCooldown > 0) continue;
+        // +1 slop: grid positions can be up to one tick stale
+        for (const b of world.spatialGrid.getNearby(a.x, a.z, ConflictSystem.CONFLICT_RANGE + 1)) {
+          if (b.id <= a.id) continue; // each pair once
+          const result = ConflictSystem.checkConflict(a, b, alivePop, conflictInterval);
+          if (result) {
+            // Event payloads must stay structured-clone-safe: scalars only
+            pendingEvents.push({
+              type: 'conflict',
+              message: `${a.name} and ${b.name} clash over territory!`,
+              x: (a.x + b.x) / 2,
+              z: (a.z + b.z) / 2,
+              agentAId: a.id,
+              agentBId: b.id,
+            });
+          }
+        }
+      }
+    }
+
     // SettlementSystem
     try { settlementSystem.tick(delta, agents, world, time.day); } catch(e) { throw new Error('[settlement] ' + e.message); }
     settlementSystem.updateMembership(agents);
@@ -392,6 +448,97 @@ function runTick(realDelta, inputs) {
       s._prevMemberIds = new Set(s.memberIds);
     }
 
+    // Agent-to-agent trading — throttled (~2s); both partners must know 'trade'.
+    // Uses _p2pTradeCooldown (distinct from _traderCooldown, which drives the
+    // CAD-178 inter-settlement trader journeys).
+    tradeCheckTimer += delta;
+    if (tradeCheckTimer >= 2 && itemDefs.size > 0) {
+      const tradeInterval = tradeCheckTimer;
+      tradeCheckTimer = 0;
+      for (const a of agents) {
+        a._p2pTradeCooldown = Math.max(0, (a._p2pTradeCooldown ?? 0) - tradeInterval);
+        if (a.health <= 0 || a._p2pTradeCooldown > 0 || !a.knowledge.has('trade')) continue;
+        const partner = TradingSystem.findTradePartner(a, world.spatialGrid.getNearby(a.x, a.z, 4), 3);
+        if (!partner || (partner._p2pTradeCooldown ?? 0) > 0) continue;
+        const res = TradingSystem.tryTrade(a, partner, itemDefs);
+        if (res.traded) {
+          a._p2pTradeCooldown = 30 + Math.random() * 30;
+          partner._p2pTradeCooldown = 30 + Math.random() * 30;
+          pendingEvents.push({
+            type: 'trade',
+            message: `${a.name} traded with ${partner.name}`,
+            x: a.x,
+            z: a.z,
+            agentAId: a.id,
+            agentBId: partner.id,
+            agentAName: a.name,
+            agentBName: partner.name,
+            aGave: res.aGave,
+            bGave: res.bGave,
+          });
+        } else {
+          // Nothing tradeable right now — back off briefly instead of rescanning
+          a._p2pTradeCooldown = 8;
+        }
+      }
+    }
+
+    // CAD-176: settlement wars — checked once per game day
+    if (time.day !== lastWarCheckDay) {
+      lastWarCheckDay = time.day;
+      const wars = ConflictSystem.checkSettlementWars(settlementSystem.settlements, agents, time.day, warCooldowns);
+      for (const war of wars) {
+        // historyLog lives on the main thread — it logs from the event below
+        ConflictSystem.resolveWar(war, agents, null, time.day, settlementSystem);
+        const winName = war.winner.name || `Camp ${war.winner.id}`;
+        const loseName = war.loser.name || `Camp ${war.loser.id}`;
+        pendingEvents.push({
+          type: 'war',
+          message: `War between ${winName} and ${loseName} — ${winName} prevails`,
+          x: war.loser.x,
+          z: war.loser.z,
+        });
+      }
+    }
+
+    // Disease — onset + proximity spread (per-agent progression is in Agent.tick)
+    for (const evt of diseaseSystem.tick(delta, agents, world.spatialGrid, time.day, settlementSystem)) {
+      if (evt.type === 'outbreak') {
+        pendingEvents.push({
+          type: 'disease_outbreak',
+          message: `🦠 ${evt.agent.name} has fallen ill — sickness spreads!`,
+          x: evt.agent.x,
+          z: evt.agent.z,
+          agentId: evt.agent.id,
+        });
+      } else if (evt.type === 'recovery') {
+        pendingEvents.push({
+          type: 'disease_recovery',
+          message: `${evt.agent.name} recovered from illness`,
+          x: evt.agent.x,
+          z: evt.agent.z,
+          agentId: evt.agent.id,
+        });
+      }
+    }
+
+    // Death events — emitted once per agent (covers starvation, old age,
+    // war kills and disease; deathCause is set wherever the agent dies)
+    for (const a of agents) {
+      if ((a.isDead || a.health <= 0) && !deadNotified.has(a.id)) {
+        deadNotified.add(a.id);
+        pendingEvents.push({
+          type: 'death',
+          message: '',
+          x: a.x,
+          z: a.z,
+          agentId: a.id,
+          agentName: a.name,
+          cause: a.deathCause ?? 'unknown',
+        });
+      }
+    }
+
     // Achievements
     const aliveCount = agents.filter(a => a.health > 0).length;
     const newAchievements = achievements.tick({ agents, conceptGraph, day: time.day, population: aliveCount });
@@ -400,6 +547,9 @@ function runTick(realDelta, inputs) {
         type: 'achievement',
         message: `${a.icon} Achievement unlocked: ${a.title}`,
         x: 0, z: 0,
+        achievementId: a.id,
+        icon: a.icon,
+        title: a.title,
       });
     }
 
@@ -439,13 +589,13 @@ self.onmessage = async (e) => {
 
   try {
     if (data.type === 'INIT') {
-      const { seed, agentCount, conceptsData, itemsData } = data;
+      const { seed, agentCount, conceptsData, itemsData, unlockedAchievements } = data;
 
       if (itemsData) {
         itemDefs = new Map(itemsData.map(item => [item.id, item]));
       }
 
-      initSim(seed, agentCount, conceptsData);
+      initSim(seed, agentCount, conceptsData, unlockedAchievements);
 
       // Send INIT_COMPLETE with full tile data
       self.postMessage({
@@ -465,8 +615,8 @@ self.onmessage = async (e) => {
     }
 
     else if (data.type === 'RESET') {
-      const { seed, agentCount, conceptsData } = data;
-      initSim(seed ?? Math.floor(Math.random() * 9999), agentCount, conceptsData);
+      const { seed, agentCount, conceptsData, unlockedAchievements } = data;
+      initSim(seed ?? Math.floor(Math.random() * 9999), agentCount, conceptsData, unlockedAchievements);
       self.postMessage({
         type: 'INIT_COMPLETE',
         fullTiles: world.tiles.flat(),

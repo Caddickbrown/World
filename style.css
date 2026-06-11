@@ -99,6 +99,24 @@ body {
 .stat-label { color: #8aa6c0; }
 .stat-row span:last-child { color: #c5e0f8; font-weight: 500; }
 
+.achievement-row { padding: 0.25rem 0; }
+.achievement-row.locked { opacity: 0.35; }
+.achievement-title { font-size: 12px; color: #c5e0f8; font-weight: 500; }
+.achievement-desc { font-size: 10px; color: #8aa6c0; }
+
+.timeline-entry {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.timeline-day {
+  margin-left: auto;
+  white-space: nowrap;
+  opacity: 0.45;
+}
+
 #reset-btn {
   width: 100%;
   padding: 8px 12px;
@@ -657,6 +675,26 @@ body {
   pointer-events: none;
   font-size: 12px;
   line-height: 1.7;
+}
+
+/* The panel itself is click-through, but its buttons must stay interactive
+   (overlay toggles: graph, knowledge, resource, heatmap, timeline) */
+#stats-panel button {
+  pointer-events: all;
+}
+
+/* Overlay panels sit inside the click-through #hud — without this their
+   close buttons and scrollbars receive no pointer events */
+#timeline-panel,
+#pop-graph-panel,
+#knowledge-overlay-panel {
+  pointer-events: all;
+}
+
+/* Seed input + New World button (in the click-through #hud-top) */
+#seed-controls input,
+#seed-controls button {
+  pointer-events: all;
 }
 
 .stats-row {

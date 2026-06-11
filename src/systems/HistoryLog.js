@@ -26,7 +26,10 @@ export class HistoryLog {
 
   /** Icons per type */
   static icon(type) {
-    return { discovery: '💡', birth: '👶', death: '💀', weather: '🌩️', milestone: '🏆' }[type] || '📋';
+    return {
+      discovery: '💡', birth: '👶', death: '💀', weather: '🌩️', milestone: '🏆',
+      conflict: '⚔️', war: '🏰', trade: '🤝', disaster: '🌋', achievement: '🏆', disease: '🦠',
+    }[type] || '📋';
   }
 
   /**
@@ -36,7 +39,13 @@ export class HistoryLog {
    * @returns {string}
    */
   static formatDeath(agent, cause) {
-    const causeText = { starvation: 'starvation', old_age: 'old age', unknown: 'unknown causes' }[cause] || cause;
+    const causeText = {
+      starvation: 'starvation',
+      old_age: 'old age',
+      disease: 'disease',
+      conflict: 'a conflict',
+      unknown: 'unknown causes',
+    }[cause] || cause;
     return agent.name + ' died of ' + causeText;
   }
 

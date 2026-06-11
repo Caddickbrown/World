@@ -301,7 +301,12 @@ export class AgentRenderer {
         bodyMat.emissive.setHex(0x3a1a00);
       } else {
         bodyMat.color.copy(STATE_COLOR[agent.state] ?? STATE_COLOR[AgentState.WANDERING]);
-        bodyMat.emissive.setHex(agent.selected ? 0x222244 : 0x000000);
+        if (agent.isSick) {
+          // Sickly green glow — state colour still shows through
+          bodyMat.emissive.setHex(0x1a3a1a);
+        } else {
+          bodyMat.emissive.setHex(agent.selected ? 0x222244 : 0x000000);
+        }
       }
 
       // State indicator: update colour based on current state and billboard to face camera
@@ -374,6 +379,7 @@ export class AgentRenderer {
       a.role = ws.role;
       a.task = ws.task;
       a.isDead = ws.isDead;
+      a.isSick = ws.isSick;
       a.facingX = ws.facingX;
       a.facingZ = ws.facingZ;
       a.discoveryFlash = ws.discoveryFlash;
