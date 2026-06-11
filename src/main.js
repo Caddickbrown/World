@@ -934,7 +934,8 @@ async function init() {
     const mm = Math.floor((todHours % 1) * 60).toString().padStart(2, '0');
     set('sp-time', hh + ':' + mm);
     set('sp-weather', weather.label);
-    set('sp-settlements', settlementSystem.settlements.length);
+    // Settlement state is owned by the worker; the main-thread instance is never ticked
+    set('sp-settlements', latestWorkerState?.worldStats?.settlements ?? 0);
   }
 
   // ── Speech bubble (CAD-330) ────────────────────────────────────────────
@@ -1456,6 +1457,48 @@ async function init() {
     popGraphBtn.style.background = 'rgba(255,255,255,0.1)';
   });
 
+  // ── Timeline panel ─────────────────────────────────────────────────────
+  let timelineVisible = false;
+  let _lastTimelineCount = -1;
+  const timelinePanel   = document.getElementById('timeline-panel');
+  const timelineBtn     = document.getElementById('timeline-btn');
+  const timelineClose   = document.getElementById('timeline-close');
+  const timelineContent = document.getElementById('timeline-content');
+
+  function updateTimeline() {
+    if (!timelineVisible || !timelineContent) return;
+    if (historyLog.entries.length === _lastTimelineCount) return;
+    _lastTimelineCount = historyLog.entries.length;
+    if (historyLog.entries.length === 0) {
+      timelineContent.innerHTML = '<em style="opacity:.4">Nothing has happened yet...</em>';
+      return;
+    }
+    timelineContent.replaceChildren(...historyLog.recent.slice(0, 60).map(entry => {
+      const row = document.createElement('div');
+      row.className = 'timeline-entry';
+      const msg = document.createElement('span');
+      msg.textContent = `${HistoryLog.icon(entry.type)} ${entry.message}`;
+      const day = document.createElement('span');
+      day.className = 'timeline-day';
+      day.textContent = 'Day ' + entry.day;
+      row.append(msg, day);
+      return row;
+    }));
+  }
+
+  if (timelineBtn) timelineBtn.addEventListener('click', () => {
+    timelineVisible = !timelineVisible;
+    timelinePanel.style.display = timelineVisible ? 'block' : 'none';
+    timelineBtn.style.background = timelineVisible ? 'rgba(80,220,120,0.3)' : 'rgba(255,255,255,0.1)';
+    _lastTimelineCount = -1;
+    if (timelineVisible) updateTimeline();
+  });
+  if (timelineClose) timelineClose.addEventListener('click', () => {
+    timelineVisible = false;
+    timelinePanel.style.display = 'none';
+    timelineBtn.style.background = 'rgba(255,255,255,0.1)';
+  });
+
   // ── CAD-160: Knowledge overlay ────────────────────────────────────────
   let knowledgeOverlayVisible = false;
   const knowledgePanel  = document.getElementById('knowledge-overlay-panel');
@@ -1637,6 +1680,7 @@ async function init() {
     if (resourceOverlayVisible) drawResourceOverlay();
     if (heatmapOverlayVisible) drawHeatmapOverlay();
     if (knowledgeOverlayVisible) updateKnowledgeOverlay();
+    if (timelineVisible) updateTimeline();
   }
 
   // ── Worker message handler ─────────────────────────────────────────────
@@ -1808,6 +1852,11 @@ async function init() {
             case 'war':
               showNotification('⚔️ ' + evt.message, 'social');
               historyLog.add('war', evt.message, time.day);
+              audio.playEvent('death');
+              break;
+            case 'death':
+              historyLog.addDeath({ name: evt.agentName }, evt.cause, time.day);
+              showNotification('💀 ' + HistoryLog.formatDeath({ name: evt.agentName }, evt.cause), 'social');
               audio.playEvent('death');
               break;
           }

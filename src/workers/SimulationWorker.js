@@ -55,6 +55,7 @@ let conflictCheckTimer = 0;       // throttle for pairwise faction conflicts
 let tradeCheckTimer = 0;          // throttle for agent-to-agent trade attempts
 let warCooldowns = new Map();     // settlement-pair war cooldowns ("idA_idB" -> day)
 let lastWarCheckDay = -1;         // settlement wars checked once per game day
+let deadNotified = new Set();     // agent ids whose death event has been emitted
 
 // Pending events to flush each tick
 let pendingEvents = [];
@@ -168,6 +169,7 @@ function initSim(seed, agentCount, conceptsData) {
   tradeCheckTimer = 0;
   warCooldowns = new Map();
   lastWarCheckDay = -1;
+  deadNotified = new Set();
 
   pendingEvents = [];
   _prevTileSnapshot = snapshotTileTypes();
@@ -490,6 +492,23 @@ function runTick(realDelta, inputs) {
           message: `War between ${winName} and ${loseName} — ${winName} prevails`,
           x: war.loser.x,
           z: war.loser.z,
+        });
+      }
+    }
+
+    // Death events — emitted once per agent (covers starvation, old age,
+    // war kills and disease; deathCause is set wherever the agent dies)
+    for (const a of agents) {
+      if ((a.isDead || a.health <= 0) && !deadNotified.has(a.id)) {
+        deadNotified.add(a.id);
+        pendingEvents.push({
+          type: 'death',
+          message: '',
+          x: a.x,
+          z: a.z,
+          agentId: a.id,
+          agentName: a.name,
+          cause: a.deathCause ?? 'unknown',
         });
       }
     }

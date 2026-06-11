@@ -99,6 +99,19 @@ body {
 .stat-label { color: #8aa6c0; }
 .stat-row span:last-child { color: #c5e0f8; font-weight: 500; }
 
+.timeline-entry {
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.timeline-day {
+  margin-left: auto;
+  white-space: nowrap;
+  opacity: 0.45;
+}
+
 #reset-btn {
   width: 100%;
   padding: 8px 12px;
