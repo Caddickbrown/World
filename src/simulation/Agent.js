@@ -166,11 +166,11 @@ export class Agent {
   /** True when the agent has reached 75% of its effective lifespan */
   get isElderly() { return this.age >= this.lifeExpectancy * 0.75; }
 
-  /** Movement speed multiplier — elderly agents slow down */
-  get speedMult() { return this.isElderly ? 0.7 : 1.0; }
+  /** Movement speed multiplier — driven by life stage (elders and children slower) */
+  get speedMult() { return this.lifeStageModifiers.speedMult; }
 
-  /** Gathering efficiency multiplier — elderly agents gather less */
-  get gatherMult() { return this.isElderly ? 0.8 : 1.0; }
+  /** Gathering efficiency multiplier — driven by life stage */
+  get gatherMult() { return this.lifeStageModifiers.gatherMult; }
 
   /** Backward-compatible curiosity accessor */
   get curiosity() { return this.personality.curiosity; }
@@ -572,7 +572,7 @@ export class Agent {
         if (this.knowledge.has('agriculture') && tile.type === TileType.GRASS) toolMult *= 1.35;
         let cookMult  = this.knowledge.has('cooking') ? 1.60 : 1.0;
         const yield_    = Math.max(0.15, tile.resource);
-        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * yield_);
+        this.needs.hunger = Math.min(1.0, this.needs.hunger + 0.60 * toolMult * cookMult * yield_ * this.gatherMult);
         tile.resource = Math.max(0, tile.resource - 0.28 / toolMult);
       }
     }
