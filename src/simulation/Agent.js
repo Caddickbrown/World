@@ -102,8 +102,14 @@ export class Agent {
     /** Starvation: tracks how long hunger has been at zero (game-sec) */
     this.starvationTimer = 0;
 
-    /** Cause of death: 'starvation', 'old_age', or null if alive */
+    /** Cause of death: 'starvation', 'old_age', 'disease', 'conflict', or null if alive */
     this.deathCause = null;
+
+    /** Disease state — infections are started by DiseaseSystem (worker-side) */
+    this.infected = false;
+    this.infectionTimer = 0;
+    this.infectionDuration = 60; // game-sec until recovery (shorter with medicine)
+    this.immuneTimer = 0;
 
     /** Family relationships */
     this.parents  = []; // array of agent IDs
@@ -273,7 +279,13 @@ export class Agent {
       this.infectionTimer += delta;
       this.health = Math.max(0, this.health - 0.0005 * delta);
       this.needs.energy = Math.max(0, this.needs.energy - 0.001 * delta);
-      if (this.infectionTimer >= 60) {
+      if (this.health <= 0) {
+        this._dropAllItems(world);
+        this.isDead = true;
+        this.deathCause = 'disease';
+        return;
+      }
+      if (this.infectionTimer >= this.infectionDuration) {
         this.infected = false;
         this.infectionTimer = 0;
         this.immuneTimer = 120;
@@ -1093,8 +1105,6 @@ export class Agent {
       const dist = Math.hypot(this.x - other.x, this.z - other.z);
       if (dist < 5.0) {
         conceptGraph.trySpread(this, other, SOCIAL_COOLDOWN);
-        // Disease spreading
-        this._trySpreadInfection(other);
         // CAD-185: track social history and potentially bond
         this._trackSocialAndBond(other);
         if (dist < 3.5) this._tryReproduce(other, conceptGraph);
@@ -1142,29 +1152,6 @@ export class Agent {
     const cz = (this.z + other.z) / 2 + (Math.random() - 0.5) * 1.5;
     // CAD-189: pass parent refs so heritable traits can be applied at birth
     conceptGraph.birthEvents.push({ x: cx, z: cz, parentName: this.name, parentAId: this.id, parentBId: other.id, parentAPersonality: this.personality, parentBPersonality: other.personality });
-  }
-
-  // ── Disease spreading ──────────────────────────────────────────────────
-
-  _trySpreadInfection(other) {
-    // Spread from this -> other
-    if (this.infected && !other.infected && !other.isImmune) {
-      let chance = 0.15;
-      if (other.knowledge.has('medicine')) chance *= 0.5;
-      if (Math.random() < chance) {
-        other.infected = true;
-        other.infectionTimer = 0;
-      }
-    }
-    // Spread from other -> this
-    if (other.infected && !this.infected && !this.isImmune) {
-      let chance = 0.15;
-      if (this.knowledge.has('medicine')) chance *= 0.5;
-      if (Math.random() < chance) {
-        this.infected = true;
-        this.infectionTimer = 0;
-      }
-    }
   }
 
   // ── Inventory actions ─────────────────────────────────────────────────

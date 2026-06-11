@@ -25,6 +25,7 @@ import { EcologySystem } from '../systems/EcologySystem.js';
 import { ConflictSystem } from '../systems/ConflictSystem.js';
 import { SettlementSystem } from '../systems/SettlementSystem.js';
 import { TradingSystem } from '../systems/TradingSystem.js';
+import { DiseaseSystem } from '../systems/DiseaseSystem.js';
 import { LineageTracker } from '../systems/LineageTracker.js';
 import { Achievements } from '../systems/Achievements.js';
 import { WildHorse } from '../simulation/WildHorse.js';
@@ -42,6 +43,7 @@ let conceptGraph = null;
 let time = null;
 let weather = null;
 let disasterSystem = null;
+let diseaseSystem = null;
 let ecologySystem = null;
 let settlementSystem = null;
 let lineageTracker = null;
@@ -104,6 +106,7 @@ function buildAgentState() {
     role: a.role || null,
     task: a.task || null,
     isDead: a.isDead || a.health <= 0,
+    isSick: !!a.infected,
     facingX: a.facingX,
     facingZ: a.facingZ,
     discoveryFlash: a.discoveryFlash,
@@ -152,6 +155,7 @@ function initSim(seed, agentCount, conceptsData, unlockedAchievements = null) {
   weather._totalTime = 0;
 
   disasterSystem = new DisasterSystem();
+  diseaseSystem = new DiseaseSystem();
   ecologySystem = new EcologySystem();
   settlementSystem = new SettlementSystem();
   lineageTracker = new LineageTracker();
@@ -493,6 +497,27 @@ function runTick(realDelta, inputs) {
           message: `War between ${winName} and ${loseName} — ${winName} prevails`,
           x: war.loser.x,
           z: war.loser.z,
+        });
+      }
+    }
+
+    // Disease — onset + proximity spread (per-agent progression is in Agent.tick)
+    for (const evt of diseaseSystem.tick(delta, agents, world.spatialGrid, time.day, settlementSystem)) {
+      if (evt.type === 'outbreak') {
+        pendingEvents.push({
+          type: 'disease_outbreak',
+          message: `🦠 ${evt.agent.name} has fallen ill — sickness spreads!`,
+          x: evt.agent.x,
+          z: evt.agent.z,
+          agentId: evt.agent.id,
+        });
+      } else if (evt.type === 'recovery') {
+        pendingEvents.push({
+          type: 'disease_recovery',
+          message: `${evt.agent.name} recovered from illness`,
+          x: evt.agent.x,
+          z: evt.agent.z,
+          agentId: evt.agent.id,
         });
       }
     }

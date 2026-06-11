@@ -629,6 +629,16 @@ async function init() {
           for (const ad of saveData.agents) {
             const a = new Agent(ad.x, ad.z);
             a.health = ad.health ?? 1;
+            // Restore the fields serialize() saves (name/age/needs/task were dropped before)
+            if (ad.name) a.name = ad.name;
+            if (ad.age != null) a.age = ad.age;
+            if (ad.maxAge != null) a.maxAge = ad.maxAge;
+            if (ad.needs) a.needs = { ...a.needs, ...ad.needs };
+            if (ad.task) a.task = ad.task;
+            a.infected = ad.infected ?? false;
+            a.infectionTimer = ad.infectionTimer ?? 0;
+            a.infectionDuration = ad.infectionDuration ?? 60;
+            a.immuneTimer = ad.immuneTimer ?? 0;
             if (ad.knowledge) ad.knowledge.forEach(k => a.knowledge.add(k));
             if (ad.inventory?.deserialize) a.inventory.deserialize(ad.inventory);
             ConflictSystem.assignFaction(a);
@@ -1889,6 +1899,14 @@ async function init() {
               historyLog.addDeath({ name: evt.agentName }, evt.cause, time.day);
               showNotification('💀 ' + HistoryLog.formatDeath({ name: evt.agentName }, evt.cause), 'social');
               audio.playEvent('death');
+              break;
+            case 'disease_outbreak':
+              showNotification(evt.message, 'env');
+              historyLog.add('disease', evt.message, time.day);
+              break;
+            case 'disease_recovery':
+              // History only — recoveries are too frequent for notifications
+              historyLog.add('disease', evt.message, time.day);
               break;
           }
         }
