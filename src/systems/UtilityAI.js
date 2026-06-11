@@ -39,9 +39,12 @@ export class UtilityAI {
       { name: 'wander',    score: this._wanderScore() },
     ];
 
-    // Sort descending by score, return the winner
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0];
+    // Single-pass max (first-wins on ties, matching the previous stable sort)
+    let best = candidates[0];
+    for (let i = 1; i < candidates.length; i++) {
+      if (candidates[i].score > best.score) best = candidates[i];
+    }
+    return best;
   }
 
   // ── Utility curves (0-1 output) ──────────────────────────────────────
@@ -54,7 +57,8 @@ export class UtilityAI {
     const base = this._clamp01(1.2 - agent.needs.hunger * 1.4);
     const hasFood = agent.inventory && agent.inventory.hasAnyFood
       ? agent.inventory.hasAnyFood()
-      : agent.inventory && agent.inventory.stacks && agent.inventory.stacks.some(s => s.itemId && s.itemId.includes('food') || s.itemId === 'cooked_meat' || s.itemId === 'berries' || s.itemId === 'raw_meat');
+      : agent.inventory && agent.inventory.stacks && agent.inventory.stacks.some(s =>
+          s.itemId && (s.itemId.includes('food') || s.itemId === 'cooked_meat' || s.itemId === 'berries' || s.itemId === 'raw_meat'));
     return base * (hasFood ? 1.5 : 0);
   }
 
@@ -83,10 +87,14 @@ export class UtilityAI {
    */
   static _socialScore(agent, allAgents) {
     if (agent.socialTimer > 0) return 0;
-    const nearby = allAgents.filter(a =>
+    // Only existence matters — use the spatial grid when the agent has one
+    const pool = agent._spatialGrid
+      ? agent._spatialGrid.getNearby(agent.x, agent.z, 5)
+      : allAgents;
+    const hasNearby = pool.some(a =>
       a !== agent && a.health > 0 && Math.hypot(a.x - agent.x, a.z - agent.z) < 5
     );
-    if (nearby.length === 0) return 0;
+    if (!hasNearby) return 0;
     return this._clamp01(0.4 + agent.curiosity * 0.3);
   }
 

@@ -598,7 +598,6 @@ export class Agent {
     const envMult = this._lastWeatherMult ?? 1.0;
 
     // CAD-175: Ritual gathering — agents with animism or ritual concept periodically gather
-    if (this._ritualCooldown > 0) this._ritualCooldown -= 0; // ticked below in movement block
     if ((this.knowledge.has('animism') || this.knowledge.has('ritual')) && this._ritualCooldown <= 0) {
       const settlement = world._settlementSystem?.getSettlementFor(this);
       if (settlement) {
@@ -616,7 +615,6 @@ export class Agent {
       if (this._traderCooldown <= 0 && world._settlementSystem) {
         if (this._startTraderJourney(world, world._settlementSystem)) return;
       }
-      if (this._traderCooldown > 0) this._traderCooldown -= 0; // will tick in tick()
     }
 
     // Low health — use medicine from inventory if available
@@ -935,10 +933,9 @@ export class Agent {
     // Teacher: bias toward other agents to share knowledge
     // Use SpatialGrid for nearby candidates when available, else fall back to allAgents
     if (taskDef?.seekSocial && allAgents.length > 1) {
-      const candidatePool = this._spatialGrid
+      const others = this._spatialGrid
         ? this._spatialGrid.getNearby(this.x, this.z, radius + 2).filter(a => a !== this && a.health > 0)
         : allAgents.filter(a => a !== this && a.health > 0);
-      const others = candidatePool.length > 0 ? candidatePool : allAgents.filter(a => a !== this && a.health > 0);
       if (others.length > 0 && Math.random() < 0.6) {
         const nearest = others.reduce((best, a) => {
           const d = Math.hypot(a.x - this.x, a.z - this.z);

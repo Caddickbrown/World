@@ -257,12 +257,13 @@ function runTick(realDelta, inputs) {
       }
     }
 
-    // Agent ticks
+    // Agent ticks — rebuild the spatial grid first so proximity queries are O(1)
+    world.updateSpatialGrid(agents);
     for (const agent of agents) {
       if (agent?.health > 0) {
         try {
           const wMult = weather.energyDrainMultAt(agent.x, agent.z);
-          agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, null, time);
+          agent.tick(delta, world, agents, conceptGraph, wMult, itemDefs.size > 0 ? itemDefs : null, time.season, world.spatialGrid, time);
         } catch (e) {
           // swallow per-agent errors
         }
