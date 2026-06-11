@@ -225,8 +225,6 @@ async function init() {
   const achievements     = new Achievements();
   const lineageTracker   = new LineageTracker();
   const settlementSystem = new SettlementSystem();
-  // CAD-176: War cooldown map — persisted between ticks
-  const _warCooldowns = new Map();
 
   // ── Minimap & History Log ──────────────────────────────────────────────
   const minimap = new MinimapRenderer(world);
@@ -1788,10 +1786,20 @@ async function init() {
               break;
             case 'disaster':
               showNotification(evt.message, 'env');
+              historyLog.add('disaster', evt.message, time.day);
               break;
             case 'achievement':
               showNotification(evt.message, 'social');
-              historyLog.add('discovery', evt.message, time.day);
+              historyLog.add('achievement', evt.message, time.day);
+              break;
+            case 'conflict':
+              showNotification(evt.message, 'social');
+              historyLog.add('conflict', evt.message, time.day);
+              break;
+            case 'war':
+              showNotification('⚔️ ' + evt.message, 'social');
+              historyLog.add('war', evt.message, time.day);
+              audio.playEvent('death');
               break;
           }
         }

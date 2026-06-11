@@ -26,7 +26,10 @@ export class HistoryLog {
 
   /** Icons per type */
   static icon(type) {
-    return { discovery: '💡', birth: '👶', death: '💀', weather: '🌩️', milestone: '🏆' }[type] || '📋';
+    return {
+      discovery: '💡', birth: '👶', death: '💀', weather: '🌩️', milestone: '🏆',
+      conflict: '⚔️', war: '🏰', trade: '🤝', disaster: '🌋', achievement: '🏆', disease: '🦠',
+    }[type] || '📋';
   }
 
   /**

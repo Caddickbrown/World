@@ -50,6 +50,9 @@ let predators = [];
 let itemDefs = new Map();
 let lightningCooldown = 0;
 let _lastTickErrorWarn = 0; // throttle for aggregated agent-tick error warnings
+let conflictCheckTimer = 0;       // throttle for pairwise faction conflicts
+let warCooldowns = new Map();     // settlement-pair war cooldowns ("idA_idB" -> day)
+let lastWarCheckDay = -1;         // settlement wars checked once per game day
 
 // Pending events to flush each tick
 let pendingEvents = [];
@@ -158,6 +161,10 @@ function initSim(seed, agentCount, conceptsData) {
 
   // CAD-163: store carrying capacity for population pressure
   carryingCapacity = world.getCarryingCapacity();
+
+  conflictCheckTimer = 0;
+  warCooldowns = new Map();
+  lastWarCheckDay = -1;
 
   pendingEvents = [];
   _prevTileSnapshot = snapshotTileTypes();
@@ -384,6 +391,35 @@ function runTick(realDelta, inputs) {
     // ConflictSystem
     ConflictSystem.updateCooldowns(agents, delta);
 
+    // Minor faction conflicts — throttled pairwise scan (~1s of game time).
+    // The accumulated interval is passed as the probability delta so the
+    // per-second conflict chance stays frame-rate independent.
+    conflictCheckTimer += delta;
+    if (conflictCheckTimer >= 1) {
+      const conflictInterval = conflictCheckTimer;
+      conflictCheckTimer = 0;
+      const alivePop = agents.filter(a => a.health > 0).length;
+      for (const a of agents) {
+        if (a.health <= 0 || a.conflictCooldown > 0) continue;
+        // +1 slop: grid positions can be up to one tick stale
+        for (const b of world.spatialGrid.getNearby(a.x, a.z, ConflictSystem.CONFLICT_RANGE + 1)) {
+          if (b.id <= a.id) continue; // each pair once
+          const result = ConflictSystem.checkConflict(a, b, alivePop, conflictInterval);
+          if (result) {
+            // Event payloads must stay structured-clone-safe: scalars only
+            pendingEvents.push({
+              type: 'conflict',
+              message: `${a.name} and ${b.name} clash over territory!`,
+              x: (a.x + b.x) / 2,
+              z: (a.z + b.z) / 2,
+              agentAId: a.id,
+              agentBId: b.id,
+            });
+          }
+        }
+      }
+    }
+
     // SettlementSystem
     try { settlementSystem.tick(delta, agents, world, time.day); } catch(e) { throw new Error('[settlement] ' + e.message); }
     settlementSystem.updateMembership(agents);
@@ -400,6 +436,24 @@ function runTick(realDelta, inputs) {
         }
       }
       s._prevMemberIds = new Set(s.memberIds);
+    }
+
+    // CAD-176: settlement wars — checked once per game day
+    if (time.day !== lastWarCheckDay) {
+      lastWarCheckDay = time.day;
+      const wars = ConflictSystem.checkSettlementWars(settlementSystem.settlements, agents, time.day, warCooldowns);
+      for (const war of wars) {
+        // historyLog lives on the main thread — it logs from the event below
+        ConflictSystem.resolveWar(war, agents, null, time.day, settlementSystem);
+        const winName = war.winner.name || `Camp ${war.winner.id}`;
+        const loseName = war.loser.name || `Camp ${war.loser.id}`;
+        pendingEvents.push({
+          type: 'war',
+          message: `War between ${winName} and ${loseName} — ${winName} prevails`,
+          x: war.loser.x,
+          z: war.loser.z,
+        });
+      }
     }
 
     // Achievements
